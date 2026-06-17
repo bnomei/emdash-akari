@@ -443,6 +443,7 @@ npm test
 The test suite builds the package and then runs Node's test runner against:
 
 - the native EmDash plugin descriptor and private route surface,
+- package loading for the `./admin` subpath with and without the export,
 - route input schemas, normalization, and syntax guards,
 - lexical/content rank fusion and resolve ambiguity,
 - private content fallback for structural discovery,
@@ -454,6 +455,11 @@ The test suite builds the package and then runs Node's test runner against:
 
 This gives a fast feedback loop for the same FTS and JSON primitives Akari uses
 in D1-backed EmDash apps.
+
+The empty `./admin` export is intentionally retained. Representative package
+loading imports `@bnomei/emdash-akari/admin` successfully while the export is
+present, and the same package fixture fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`
+when the `./admin` entry is removed.
 
 ## Private Routes
 
