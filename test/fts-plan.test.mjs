@@ -81,6 +81,22 @@ test("FTS plan uses EmDash table conventions and runs against local SQLite", () 
   });
 });
 
+test("FTS query escaping documents lexical filter semantics", () => {
+  assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
+  assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');
+  assert.equal(escapeFts5Query("workers OR d1"), "workers OR d1");
+  assert.equal(escapeFts5Query('workers "ai"'), '"workers"* ""ai"""*');
+  assert.equal(escapeFts5Query("   "), "");
+  assert.equal(
+    buildEmDashFts5Plan({
+      collection: "pages",
+      query: "   ",
+      searchableFields: ["title"],
+    }),
+    null,
+  );
+});
+
 test("FTS plan validates identifiers before raw SQL interpolation", () => {
   assert.throws(() =>
     buildEmDashFts5Plan({
