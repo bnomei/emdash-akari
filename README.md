@@ -483,6 +483,43 @@ The test suite builds the package and then runs Node's test runner against:
 This gives a fast feedback loop for the same FTS and JSON primitives Akari uses
 in D1-backed EmDash apps.
 
+## Local and D1 Expectations
+
+Akari is designed to run inside an EmDash app that may use Cloudflare D1 in
+production, but the package itself does not open a D1 binding, create a second
+search service, or require Cloudflare credentials. The private plugin routes use
+the EmDash content and search surfaces that the host app already exposes. In a
+D1-backed app, Akari assumes the app keeps the normal EmDash content tables and
+`_emdash_fts_*` FTS tables in sync and that D1 provides the same SQLite FTS5 and
+JSON functions documented for those tables.
+
+Local development has a narrower boundary:
+
+- `npm test` uses in-memory local SQLite to smoke-test FTS5, snippets, prefix
+  queries, `json_extract`, and `json_each`; it does not contact Cloudflare D1.
+- Local smoke coverage validates Akari's generated SQL and JSON-path behavior
+  against SQLite primitives that D1 also supports, but it is not a replacement
+  for running the registered plugin in your deployed EmDash environment.
+- The CLI talks to the configured EmDash app over `EMDASH_BASE_URL`; without a
+  running app and an admin token it cannot discover or resolve real content.
+- Structural discovery can scan private content through EmDash when content
+  access is available. For frequently queried nested paths, use the exported
+  facts helpers to materialize `_emdash_content_facts`; Akari does not maintain
+  that sidecar table automatically.
+
+Search and storage behavior therefore differs by environment:
+
+| Environment | Search/storage source | Important limits |
+| --- | --- | --- |
+| Local tests | In-memory SQLite fixtures plus fake plugin routes | Self-contained smoke coverage only; no D1 latency, auth, migration, or deployment behavior is exercised. |
+| Local EmDash app | The app's local EmDash storage and private plugin route | Results reflect local fixtures/content and the configured token; production D1 data is not queried unless the app is connected to it. |
+| D1-backed EmDash app | EmDash content tables, `_emdash_fts_*` tables, SQLite JSON functions, and optional Akari facts tables in D1 | Akari assumes EmDash owns schema/migrations/index freshness; D1-specific quotas, consistency, and deployment issues must be validated in the host app. |
+
+If D1-like confidence is required before adoption, run the self-contained test
+suite first, then smoke-test `akari config`, `akari discover`, and `akari
+resolve` against the target EmDash app so authentication, table shape, FTS
+freshness, JSON-path behavior, and content permissions are checked together.
+
 The empty `./admin` export is intentionally retained. Representative package
 loading imports `@bnomei/emdash-akari/admin` successfully while the export is
 present, and the same package fixture fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`
