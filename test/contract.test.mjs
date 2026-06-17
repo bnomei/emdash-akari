@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   akariPlugin,
   createPlugin,
@@ -10,6 +14,26 @@ import {
   normalizeQueryInput,
   normalizeResolveInput,
 } from "../dist/index.mjs";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+async function importAdminFromPackageFixture(packageJson) {
+  const fixture = await mkdtemp(path.join(tmpdir(), "akari-admin-export-"));
+
+  try {
+    const packageDir = path.join(fixture, "node_modules", "@bnomei", "emdash-akari");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+    await symlink(path.join(repoRoot, "dist"), path.join(packageDir, "dist"), "dir");
+
+    const entry = path.join(fixture, "entry.mjs");
+    await writeFile(entry, 'export const admin = await import("@bnomei/emdash-akari/admin");\n');
+
+    return await import(`${pathToFileURL(entry).href}?${Date.now()}`);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+}
 
 test("akariPlugin matches the native EmDash descriptor shape", () => {
   assert.deepEqual(akariPlugin(), {
@@ -34,6 +58,22 @@ test("createPlugin registers the private validated route surface", () => {
   for (const [name, route] of Object.entries(plugin.routes)) {
     assert.equal(route.public, false, `${name} must stay private`);
   }
+});
+
+test("admin subpath export is required for EmDash admin entry loading", async () => {
+  const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
+
+  const withAdmin = await importAdminFromPackageFixture(packageJson);
+  assert.deepEqual(withAdmin.admin.pages, {});
+  assert.deepEqual(withAdmin.admin.widgets, {});
+
+  const withoutAdmin = structuredClone(packageJson);
+  delete withoutAdmin.exports["./admin"];
+
+  await assert.rejects(
+    importAdminFromPackageFixture(withoutAdmin),
+    (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  );
 });
 
 test("normalizeQueryInput defaults and validates the private discover contract", () => {

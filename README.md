@@ -268,6 +268,33 @@ same EmDash full-text table convention and uses SQLite
 [FTS5](https://sqlite.org/fts5.html) ranking/snippets so `discover` can return
 an identity-shaped answer instead of only a public search hit.
 
+Lexical queries are normalized before they reach FTS5:
+
+- Leading and trailing whitespace is ignored.
+- An empty or whitespace-only query is not executable and produces no FTS plan.
+- Plain terms are split on whitespace, quoted, and treated as prefix terms. For
+  example, `workers ai` becomes `"workers"* "ai"*`, matching words that start
+  with `workers` and `ai`.
+- A fully quoted query stays a phrase query. Internal double quotes are escaped,
+  so `"workers ai"` remains a phrase search instead of becoming prefix terms.
+- Queries containing explicit FTS boolean/proximity operators (`AND`, `OR`,
+  `NOT`, or `NEAR`) are passed through as operator queries after double quotes
+  are escaped. For example, `workers OR d1` keeps the `OR` operator.
+
+Examples:
+
+```json
+{ "q": "workers ai", "mode": "lexical", "collections": ["pages"] }
+```
+
+Searches for prefix terms in the configured EmDash FTS table.
+
+```json
+{ "q": "workers OR d1", "mode": "lexical", "collections": ["pages"] }
+```
+
+Uses FTS5 boolean semantics for the operator query.
+
 Akari normalizes `score` within each response after rank fusion. Treat it as a
 relative ordering signal for that result set, not as a probability and not as a
 number that can be compared with raw EmDash search scores from MCP.
@@ -443,6 +470,7 @@ npm test
 The test suite builds the package and then runs Node's test runner against:
 
 - the native EmDash plugin descriptor and private route surface,
+- package loading for the `./admin` subpath with and without the export,
 - route input schemas, normalization, and syntax guards,
 - lexical/content rank fusion and resolve ambiguity,
 - private content fallback for structural discovery,
@@ -454,7 +482,6 @@ The test suite builds the package and then runs Node's test runner against:
 
 This gives a fast feedback loop for the same FTS and JSON primitives Akari uses
 in D1-backed EmDash apps.
-
 
 ## Local and D1 Expectations
 
@@ -492,6 +519,11 @@ If D1-like confidence is required before adoption, run the self-contained test
 suite first, then smoke-test `akari config`, `akari discover`, and `akari
 resolve` against the target EmDash app so authentication, table shape, FTS
 freshness, JSON-path behavior, and content permissions are checked together.
+
+The empty `./admin` export is intentionally retained. Representative package
+loading imports `@bnomei/emdash-akari/admin` successfully while the export is
+present, and the same package fixture fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`
+when the `./admin` entry is removed.
 
 ## Private Routes
 
@@ -533,3 +565,23 @@ import { discoverAkari, resolveAkari } from "@bnomei/emdash-akari/cli";
 ## License
 
 MIT.
+
+## Coverage
+
+CI runs the existing Node test suite with the built-in test coverage reporter:
+
+```sh
+npm run test:coverage
+```
+
+The coverage gate is intentionally maintainable and low-noise: it only includes
+built package files in `dist/*.mjs` and currently requires at least 60% line
+coverage, 70% branch coverage, and 55% function coverage. Those thresholds are
+set in the `test:coverage` script in `package.json` so the local command and CI
+use the same expectations.
+
+When coverage changes intentionally, update the threshold values in
+`package.json` in the same pull request as the related test or implementation
+change. Prefer raising thresholds after adding meaningful tests; lower them only
+when the uncovered code is intentionally difficult to exercise and note the
+reason in the pull request.
