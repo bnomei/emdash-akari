@@ -268,6 +268,33 @@ same EmDash full-text table convention and uses SQLite
 [FTS5](https://sqlite.org/fts5.html) ranking/snippets so `discover` can return
 an identity-shaped answer instead of only a public search hit.
 
+Lexical queries are normalized before they reach FTS5:
+
+- Leading and trailing whitespace is ignored.
+- An empty or whitespace-only query is not executable and produces no FTS plan.
+- Plain terms are split on whitespace, quoted, and treated as prefix terms. For
+  example, `workers ai` becomes `"workers"* "ai"*`, matching words that start
+  with `workers` and `ai`.
+- A fully quoted query stays a phrase query. Internal double quotes are escaped,
+  so `"workers ai"` remains a phrase search instead of becoming prefix terms.
+- Queries containing explicit FTS boolean/proximity operators (`AND`, `OR`,
+  `NOT`, or `NEAR`) are passed through as operator queries after double quotes
+  are escaped. For example, `workers OR d1` keeps the `OR` operator.
+
+Examples:
+
+```json
+{ "q": "workers ai", "mode": "lexical", "collections": ["pages"] }
+```
+
+Searches for prefix terms in the configured EmDash FTS table.
+
+```json
+{ "q": "workers OR d1", "mode": "lexical", "collections": ["pages"] }
+```
+
+Uses FTS5 boolean semantics for the operator query.
+
 Akari normalizes `score` within each response after rank fusion. Treat it as a
 relative ordering signal for that result set, not as a probability and not as a
 number that can be compared with raw EmDash search scores from MCP.
