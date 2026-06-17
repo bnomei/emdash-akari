@@ -495,3 +495,23 @@ import { discoverAkari, resolveAkari } from "@bnomei/emdash-akari/cli";
 ## License
 
 MIT.
+
+## Coverage
+
+CI runs the existing Node test suite with the built-in test coverage reporter:
+
+```sh
+npm run test:coverage
+```
+
+The coverage gate is intentionally maintainable and low-noise: it only includes
+built package files in `dist/*.mjs` and currently requires at least 60% line
+coverage, 70% branch coverage, and 55% function coverage. Those thresholds are
+set in the `test:coverage` script in `package.json` so the local command and CI
+use the same expectations.
+
+When coverage changes intentionally, update the threshold values in
+`package.json` in the same pull request as the related test or implementation
+change. Prefer raising thresholds after adding meaningful tests; lower them only
+when the uncovered code is intentionally difficult to exercise and note the
+reason in the pull request.
