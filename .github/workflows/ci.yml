@@ -23,7 +23,7 @@ jobs:
           - 24
     env:
       CI: true
-      NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+      NPM_CONFIG_CACHE: /tmp/npm-cache
 
     steps:
       - name: Checkout
