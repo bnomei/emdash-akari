@@ -1,5 +1,5 @@
 export const PLUGIN_ID = "akari";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.1.1";
 export const PACKAGE_NAME = "@bnomei/emdash-akari";
 
 export const DEFAULT_LIMIT = 20;

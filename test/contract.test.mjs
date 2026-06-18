@@ -23,7 +23,10 @@ async function importAdminFromPackageFixture(packageJson) {
   try {
     const packageDir = path.join(fixture, "node_modules", "@bnomei", "emdash-akari");
     await mkdir(packageDir, { recursive: true });
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+    await writeFile(
+      path.join(packageDir, "package.json"),
+      `${JSON.stringify(packageJson, null, 2)}\n`,
+    );
     await symlink(path.join(repoRoot, "dist"), path.join(packageDir, "dist"), "dir");
 
     const entry = path.join(fixture, "entry.mjs");
@@ -38,7 +41,7 @@ async function importAdminFromPackageFixture(packageJson) {
 test("akariPlugin matches the native EmDash descriptor shape", () => {
   assert.deepEqual(akariPlugin(), {
     id: "akari",
-    version: "0.1.0",
+    version: "0.1.1",
     format: "native",
     entrypoint: "@bnomei/emdash-akari",
     adminEntry: "@bnomei/emdash-akari/admin",

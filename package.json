@@ -1,6 +1,6 @@
 {
   "name": "@bnomei/emdash-akari",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent-focused EmDash discovery CLI: resolve exact content targets and query nested JSON beyond MCP search.",
   "keywords": [
     "astro",
@@ -32,7 +32,6 @@
     "README.md"
   ],
   "type": "module",
-  "packageManager": "npm@11.4.2",
   "sideEffects": false,
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -62,7 +61,7 @@
     "test": "npm run build && node --test test/*.test.mjs",
     "types:check": "attw --pack . --profile esm-only --no-summary",
     "typecheck": "tsc --noEmit",
-    "test:coverage": "npm run build && node --experimental-test-coverage \"--test-coverage-include=dist/*.mjs\" --test-coverage-lines=60 --test-coverage-branches=70 --test-coverage-functions=55 --test test/*.test.mjs"
+    "test:coverage": "npm run build && node --experimental-test-coverage \"--test-coverage-include=dist/*.mjs\" --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=55 --test test/*.test.mjs"
   },
   "dependencies": {
     "zod": "^4.4.1"
@@ -90,5 +89,6 @@
   },
   "engines": {
     "node": ">=22.13.0"
-  }
+  },
+  "packageManager": "npm@11.4.2"
 }

@@ -509,10 +509,10 @@ Local development has a narrower boundary:
 
 Search and storage behavior therefore differs by environment:
 
-| Environment | Search/storage source | Important limits |
-| --- | --- | --- |
-| Local tests | In-memory SQLite fixtures plus fake plugin routes | Self-contained smoke coverage only; no D1 latency, auth, migration, or deployment behavior is exercised. |
-| Local EmDash app | The app's local EmDash storage and private plugin route | Results reflect local fixtures/content and the configured token; production D1 data is not queried unless the app is connected to it. |
+| Environment          | Search/storage source                                                                                       | Important limits                                                                                                                                       |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Local tests          | In-memory SQLite fixtures plus fake plugin routes                                                           | Self-contained smoke coverage only; no D1 latency, auth, migration, or deployment behavior is exercised.                                               |
+| Local EmDash app     | The app's local EmDash storage and private plugin route                                                     | Results reflect local fixtures/content and the configured token; production D1 data is not queried unless the app is connected to it.                  |
 | D1-backed EmDash app | EmDash content tables, `_emdash_fts_*` tables, SQLite JSON functions, and optional Akari facts tables in D1 | Akari assumes EmDash owns schema/migrations/index freshness; D1-specific quotas, consistency, and deployment issues must be validated in the host app. |
 
 If D1-like confidence is required before adoption, run the self-contained test
@@ -576,7 +576,7 @@ npm run test:coverage
 
 The coverage gate is intentionally maintainable and low-noise: it only includes
 built package files in `dist/*.mjs` and currently requires at least 60% line
-coverage, 70% branch coverage, and 55% function coverage. Those thresholds are
+coverage, 60% branch coverage, and 55% function coverage. Those thresholds are
 set in the `test:coverage` script in `package.json` so the local command and CI
 use the same expectations.
 

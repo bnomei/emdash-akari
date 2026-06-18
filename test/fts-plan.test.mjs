@@ -85,7 +85,7 @@ test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
   assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');
   assert.equal(escapeFts5Query("workers OR d1"), "workers OR d1");
-  assert.equal(escapeFts5Query('workers "ai"'), '"workers"* ""ai"""*');
+  assert.equal(escapeFts5Query('workers "ai"'), '"workers"* """ai"""*');
   assert.equal(escapeFts5Query("   "), "");
   assert.equal(
     buildEmDashFts5Plan({

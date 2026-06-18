@@ -36,6 +36,30 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
 
+      - name: Verify npm version is unpublished
+        run: |
+          node <<'EOF'
+          const { spawnSync } = require("node:child_process");
+          const fs = require("node:fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const spec = `${pkg.name}@${pkg.version}`;
+          const result = spawnSync("npm", ["view", spec, "version"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+
+          if (result.status === 0) {
+            console.error(`${spec} is already published.`);
+            process.exit(1);
+          }
+
+          const output = `${result.stdout}\n${result.stderr}`;
+          if (!output.includes("E404") && !output.includes("404")) {
+            console.error(output.trim() || `Could not verify ${spec} on npm.`);
+            process.exit(result.status ?? 1);
+          }
+          EOF
+
       - name: Run VitePlus checks
         run: npm run check
 
