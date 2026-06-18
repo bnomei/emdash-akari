@@ -1,6 +1,6 @@
 {
   "name": "@bnomei/emdash-akari",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Agent-focused EmDash discovery CLI: resolve exact content targets and query nested JSON beyond MCP search.",
   "keywords": [
     "astro",

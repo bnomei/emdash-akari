@@ -41,7 +41,7 @@ async function importAdminFromPackageFixture(packageJson) {
 test("akariPlugin matches the native EmDash descriptor shape", () => {
   assert.deepEqual(akariPlugin(), {
     id: "akari",
-    version: "0.1.1",
+    version: "0.1.2",
     format: "native",
     entrypoint: "@bnomei/emdash-akari",
     adminEntry: "@bnomei/emdash-akari/admin",

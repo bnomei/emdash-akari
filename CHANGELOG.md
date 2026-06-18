@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-06-18
+
+- Bumped plugin metadata for the next Akari patch release.
+
 ## 0.1.1
 
 - Fixed CI coverage thresholds so the documented coverage command passes.
