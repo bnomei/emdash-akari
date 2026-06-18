@@ -495,8 +495,10 @@ JSON functions documented for those tables.
 
 Local development has a narrower boundary:
 
-- `npm test` uses in-memory local SQLite to smoke-test FTS5, snippets, prefix
-  queries, `json_extract`, and `json_each`; it does not contact Cloudflare D1.
+- `npm test` uses in-memory local SQLite to smoke-test snippets, prefix queries,
+  `json_extract`, and `json_each`; FTS5-only smoke tests run when the local Node
+  SQLite build provides the FTS5 extension. The suite does not contact
+  Cloudflare D1.
 - Local smoke coverage validates Akari's generated SQL and JSON-path behavior
   against SQLite primitives that D1 also supports, but it is not a replacement
   for running the registered plugin in your deployed EmDash environment.

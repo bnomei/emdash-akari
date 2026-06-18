@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { sqliteSupportsFts5 } from "./sqlite-support.mjs";
 
-test("SQLite FTS5 supports weighted lexical ranking, snippets, prefix search, and vocabulary", () => {
-  const db = new DatabaseSync(":memory:");
-  db.exec(`
+const hasFts5 = sqliteSupportsFts5();
+const skipWithoutFts5 = hasFts5 ? false : "SQLite FTS5 extension is unavailable in this Node build";
+
+test(
+  "SQLite FTS5 supports weighted lexical ranking, snippets, prefix search, and vocabulary",
+  { skip: skipWithoutFts5 },
+  () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
     CREATE VIRTUAL TABLE docs USING fts5(
       id UNINDEXED,
       title,
@@ -20,8 +27,8 @@ test("SQLite FTS5 supports weighted lexical ranking, snippets, prefix search, an
     CREATE VIRTUAL TABLE docs_vocab USING fts5vocab(docs, 'row');
   `);
 
-  const rows = db
-    .prepare(`
+    const rows = db
+      .prepare(`
       SELECT
         id,
         bm25(docs, 1.0, 8.0, 1.0) AS rank,
@@ -31,20 +38,21 @@ test("SQLite FTS5 supports weighted lexical ranking, snippets, prefix search, an
       ORDER BY rank
       LIMIT 5
     `)
-    .all("workers*")
-    .map((row) => ({ ...row }));
+      .all("workers*")
+      .map((row) => ({ ...row }));
 
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].id, "title-hit");
-  assert.match(rows[0].snippet, /<mark>Workers<\/mark>/);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].id, "title-hit");
+    assert.match(rows[0].snippet, /<mark>Workers<\/mark>/);
 
-  const terms = db
-    .prepare("SELECT term, doc, cnt FROM docs_vocab WHERE term = ?")
-    .all("worker")
-    .map((row) => ({ ...row }));
+    const terms = db
+      .prepare("SELECT term, doc, cnt FROM docs_vocab WHERE term = ?")
+      .all("worker")
+      .map((row) => ({ ...row }));
 
-  assert.deepEqual(terms, [{ term: "worker", doc: 2, cnt: 3 }]);
-});
+    assert.deepEqual(terms, [{ term: "worker", doc: 2, cnt: 3 }]);
+  },
+);
 
 test("SQLite JSON1 can inspect nested block data without a Cloudflare D1 binding", () => {
   const db = new DatabaseSync(":memory:");

@@ -8,10 +8,17 @@ import {
   getEmDashFtsTableName,
   mapFtsRows,
 } from "../dist/index.mjs";
+import { sqliteSupportsFts5 } from "./sqlite-support.mjs";
 
-test("FTS plan uses EmDash table conventions and runs against local SQLite", () => {
-  const db = new DatabaseSync(":memory:");
-  db.exec(`
+const hasFts5 = sqliteSupportsFts5();
+const skipWithoutFts5 = hasFts5 ? false : "SQLite FTS5 extension is unavailable in this Node build";
+
+test(
+  "FTS plan uses EmDash table conventions and runs against local SQLite",
+  { skip: skipWithoutFts5 },
+  () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
     CREATE TABLE ec_pages (
       id TEXT PRIMARY KEY,
       slug TEXT,
@@ -41,45 +48,46 @@ test("FTS plan uses EmDash table conventions and runs against local SQLite", () 
       ('fr', 'fr', 'Recherche Workers AI', 'Workers AI translated.');
   `);
 
-  assert.equal(getEmDashFtsTableName("pages"), "_emdash_fts_pages");
-  assert.equal(getEmDashContentTableName("pages"), "ec_pages");
-  assert.equal(escapeFts5Query("workers ai"), '"workers"* "ai"*');
+    assert.equal(getEmDashFtsTableName("pages"), "_emdash_fts_pages");
+    assert.equal(getEmDashContentTableName("pages"), "ec_pages");
+    assert.equal(escapeFts5Query("workers ai"), '"workers"* "ai"*');
 
-  const plan = buildEmDashFts5Plan({
-    collection: "pages",
-    query: "workers ai",
-    searchableFields: ["title", "body"],
-    weights: { title: 8, body: 1 },
-    status: "published",
-    locale: "en",
-    limit: 5,
-  });
-
-  assert.ok(plan);
-  const rows = db
-    .prepare(plan.sql)
-    .all(...plan.params)
-    .map((row) => ({ ...row }));
-
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].id, "home");
-
-  assert.deepEqual(mapFtsRows("pages", rows)[0], {
-    identity: {
+    const plan = buildEmDashFts5Plan({
       collection: "pages",
-      id: "home",
-      slug: "workers-ai",
+      query: "workers ai",
+      searchableFields: ["title", "body"],
+      weights: { title: 8, body: 1 },
+      status: "published",
       locale: "en",
-      status: undefined,
-      title: "Workers AI Search",
-      url: "/pages/workers-ai",
-    },
-    score: Math.abs(rows[0].score),
-    snippet: rows[0].snippet,
-    matchedFields: ["fts"],
-    matchedPaths: [],
-  });
-});
+      limit: 5,
+    });
+
+    assert.ok(plan);
+    const rows = db
+      .prepare(plan.sql)
+      .all(...plan.params)
+      .map((row) => ({ ...row }));
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, "home");
+
+    assert.deepEqual(mapFtsRows("pages", rows)[0], {
+      identity: {
+        collection: "pages",
+        id: "home",
+        slug: "workers-ai",
+        locale: "en",
+        status: undefined,
+        title: "Workers AI Search",
+        url: "/pages/workers-ai",
+      },
+      score: Math.abs(rows[0].score),
+      snippet: rows[0].snippet,
+      matchedFields: ["fts"],
+      matchedPaths: [],
+    });
+  },
+);
 
 test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
