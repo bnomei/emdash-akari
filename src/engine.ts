@@ -49,16 +49,21 @@ export async function runAkariQuery(
   const collections = resolveCollections(input, options.defaultCollections);
   const lexicalSearch = options.lexicalSearch ?? emdashSearch;
 
+  let lexicalNextCursor: string | undefined;
+  let ranContentScan = false;
+
   if (usesLexical(input)) {
     try {
       const lexical = await runLexicalSearch(input, collections, lexicalSearch, options.content);
-      groups.push(toRankedGroup(lexical, "fts"));
+      groups.push(toRankedGroup(lexical.candidates, "fts"));
+      lexicalNextCursor = lexical.nextCursor;
     } catch (error) {
       warnings.push(`FTS search unavailable: ${getErrorMessage(error)}.`);
     }
   }
 
   if (shouldRunContentScan(input, options, collections)) {
+    ranContentScan = true;
     const scanned = await scanContent(input, collections, options, warnings);
     groups.push(toRankedGroup(scanned, "content"));
 
@@ -87,9 +92,15 @@ export async function runAkariQuery(
     ? limited.map((item) => projectResult(item, input.select ?? []))
     : limited;
 
+  // Cursor pagination is only coherent for a single search layer. When the
+  // content scan also runs, the fused order has no single continuation token,
+  // so nextCursor is surfaced only when lexical search is the sole layer.
+  const nextCursor = ranContentScan ? undefined : lexicalNextCursor;
+
   return {
     items,
     facets,
+    nextCursor,
     warnings: warnings.length > 0 ? warnings : undefined,
     explain: input.explain
       ? {
@@ -171,8 +182,8 @@ async function runLexicalSearch(
   collections: string[],
   searchProvider: AkariLexicalSearchProvider,
   content: ContentAccess | undefined,
-): Promise<EngineCandidate[]> {
-  if (!input.q) return [];
+): Promise<{ candidates: EngineCandidate[]; nextCursor?: string }> {
+  if (!input.q) return { candidates: [] };
 
   const response = await searchProvider(input.q, {
     collections: collections.length > 0 ? collections : undefined,
@@ -219,7 +230,7 @@ async function runLexicalSearch(
     });
   }
 
-  return out;
+  return { candidates: out, nextCursor: response.nextCursor };
 }
 
 async function fetchLexicalEntry(

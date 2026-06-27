@@ -590,6 +590,29 @@ test("query applies the validated sort parameter to fused results", async () => 
   );
 });
 
+test("lexical-only query surfaces the provider nextCursor for pagination", async () => {
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "home", slug: "home", locale: "en", title: "Home", score: 9 },
+    ],
+    nextCursor: "page-2",
+  });
+
+  // No content access → lexical is the sole layer → pagination is coherent.
+  const lexicalOnly = await runAkariQuery(
+    normalizeQueryInput({ q: "workers", mode: "lexical", collections: ["pages"], limit: 5 }),
+    { lexicalSearch },
+  );
+  assert.equal(lexicalOnly.nextCursor, "page-2");
+
+  // With content scan running too, the fused order has no single cursor.
+  const fused = await runAkariQuery(
+    normalizeQueryInput({ q: "workers", mode: "lexical", collections: ["pages"], limit: 5 }),
+    { content, lexicalSearch },
+  );
+  assert.equal(fused.nextCursor, undefined);
+});
+
 test("query projects response items to the selected fields", async () => {
   const response = await runAkariQuery(
     normalizeQueryInput({

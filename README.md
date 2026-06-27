@@ -263,6 +263,13 @@ Use top-level `collections` as the normal collection selector. If `collections`
 is omitted, Akari can fall back to `filter.collection`; otherwise `filter` is
 best reserved for metadata such as `status`, `locale`, or `updatedAt`.
 
+Cursor pagination (`after` / `nextCursor`) is supported only for single-layer
+lexical queries. When Akari fuses the lexical and content-scan layers (the
+default whenever content access is available), the merged ranking has no single
+continuation token, so `nextCursor` is omitted. To paginate, run a lexical-only
+query (no content scan), pass the returned `nextCursor` back as `after`, and
+continue until `nextCursor` is absent.
+
 Lexical mode does not introduce a second content index. Akari plans against the
 same EmDash full-text table convention and uses SQLite
 [FTS5](https://sqlite.org/fts5.html) ranking/snippets so `discover` can return
