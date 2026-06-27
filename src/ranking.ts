@@ -1,3 +1,6 @@
+/**
+ * Reciprocal rank fusion for merging lexical and content-scan candidate layers.
+ */
 import type { AkariIdentity, AkariResult } from "./types";
 
 export type AkariRankedCandidate = {
@@ -20,10 +23,12 @@ type Accumulator = {
   sources: Set<string>;
 };
 
+/** Stable fusion key: `collection:id:locale`. */
 export function resultKey(result: AkariResult): string {
   return `${result.identity.collection}:${result.identity.id}:${result.identity.locale ?? ""}`;
 }
 
+/** Fuse ranked groups by entry key; normalizes scores to [0, 1] within the result set. */
 export function reciprocalRankFusion(
   groups: AkariRankedCandidate[][],
   options: AkariRankFusionOptions = {},
@@ -76,13 +81,8 @@ function mergeResult(left: AkariResult, right: AkariResult): AkariResult {
   };
 }
 
-/**
- * Merge identity fields without letting a later layer's null/undefined value
- * erase a defined value from an earlier layer. Defined `right` fields (content,
- * the authoritative record) win; otherwise `left` (e.g. FTS) is kept. Prevents
- * a null content slug/title from clobbering values the lexical layer supplied.
- */
 function mergeIdentity(left: AkariIdentity, right: AkariIdentity): AkariIdentity {
+  // Defined right fields win; null/undefined must not erase an earlier layer's value.
   return {
     collection: right.collection ?? left.collection,
     id: right.id ?? left.id,

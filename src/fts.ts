@@ -1,3 +1,6 @@
+/**
+ * EmDash FTS5 SQL plan builders and row mapping for D1/SQLite lexical search.
+ */
 import type { AkariIdentity, AkariResult } from "./types";
 
 export type AkariFtsPlanInput = {
@@ -26,9 +29,7 @@ export type AkariFtsRow = {
 
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const whitespaceSplitPattern = /\s+/;
-// FTS5 boolean/proximity operators are case-sensitive (uppercase only). No `/i`
-// flag, so ordinary lowercase words like "and"/"or"/"not"/"near" stay plain
-// terms and keep prefix-term normalization instead of being treated as operators.
+// FTS5 boolean operators are uppercase-only; lowercase words stay prefix-normalized terms.
 const ftsOperatorsPattern = /\b(AND|OR|NOT|NEAR)\b/;
 const doubleQuotePattern = /"/g;
 
@@ -42,13 +43,12 @@ export function getEmDashContentTableName(collection: string): string {
   return `ec_${collection}`;
 }
 
+/** Normalize a user query into an FTS5 MATCH expression; returns `""` when unusable. */
 export function escapeFts5Query(query: string): string {
   const trimmed = query.trim();
   if (!trimmed) return "";
 
   if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    // An empty (or whitespace-only) phrase is not a valid MATCH expression;
-    // treat it as no query so buildEmDashFts5Plan short-circuits to null.
     const inner = trimmed.slice(1, -1).trim();
     if (!inner) return "";
     return `"${inner.replace(doubleQuotePattern, '""')}"`;
@@ -57,9 +57,6 @@ export function escapeFts5Query(query: string): string {
   const escaped = trimmed.replace(doubleQuotePattern, '""');
   if (ftsOperatorsPattern.test(trimmed)) return escaped;
 
-  // Build prefix-term phrases from the raw words, dropping any term that has no
-  // characters other than quotes (e.g. a lone `"`), which would otherwise emit a
-  // malformed phrase like `""""*`. If nothing survives, treat as an empty query.
   const terms = trimmed
     .split(whitespaceSplitPattern)
     .filter((term) => term.replaceAll('"', "").length > 0);
@@ -68,8 +65,8 @@ export function escapeFts5Query(query: string): string {
 }
 
 /**
- * Build an EmDash-compatible FTS5 SQL plan. When `status` is omitted, the plan
- * does not add a status predicate; pass an explicit status to constrain rows.
+ * Build a parameterized FTS5 search plan against EmDash `_emdash_fts_*` tables.
+ * Omits status filtering when `status` is undefined; returns null for empty queries.
  */
 export function buildEmDashFts5Plan(input: AkariFtsPlanInput): AkariSqlPlan | null {
   const ftsQuery = escapeFts5Query(input.query);
@@ -112,6 +109,7 @@ LIMIT ?`.trim(),
   };
 }
 
+/** Map raw FTS query rows into Akari results with escaped snippets. */
 export function mapFtsRows(collection: string, rows: AkariFtsRow[]): AkariResult[] {
   return rows.map((row) => ({
     identity: {
@@ -130,15 +128,8 @@ export function mapFtsRows(collection: string, rows: AkariFtsRow[]): AkariResult
   }));
 }
 
-/**
- * SQLite `snippet()` wraps raw indexed document text in `<mark>`/`</mark>`
- * markers without escaping the surrounding text. Escape all HTML metacharacters
- * and then restore the literal highlight markers, so the only markup that
- * survives is the intended `<mark>` wrapper (mirrors the content-scan snippet
- * path, which escapes before adding marks). Prevents stored XSS when callers
- * render snippets as HTML.
- */
 function escapeFtsSnippet(snippet: string): string {
+  // Escape indexed text, then restore only the intended <mark> highlight wrappers.
   return snippet
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

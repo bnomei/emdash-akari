@@ -1,3 +1,8 @@
+/**
+ * EmDash Akari public surface: plugin registration, validated discover/resolve
+ * contracts, and integrator helpers for lexical search, structural paths, and
+ * content facts.
+ */
 import { definePlugin, type PluginDescriptor } from "emdash";
 import { PACKAGE_NAME, PLUGIN_ID, PLUGIN_VERSION } from "./constants";
 import { configRoute, createDiscoverRoute, createResolveRoute } from "./query";
@@ -127,6 +132,7 @@ export {
   type AkariStructuralSqlPlan,
 } from "./structural";
 
+/** Native EmDash plugin descriptor for Astro registration (`akariPlugin()`). */
 export function akariPlugin(options: AkariDescriptorOptions = {}): PluginDescriptor {
   const entrypoint = options.entrypoint ?? PACKAGE_NAME;
   const adminEntry = options.adminEntry ?? `${entrypoint}/admin`;
@@ -142,6 +148,7 @@ export function akariPlugin(options: AkariDescriptorOptions = {}): PluginDescrip
   };
 }
 
+/** Runtime plugin factory wiring private discover, resolve, and config routes. */
 export function createPlugin(options: AkariCreatePluginOptions = {}) {
   return definePlugin({
     id: PLUGIN_ID,

@@ -1,3 +1,6 @@
+/**
+ * Request normalization and lightweight syntax guards for Akari query inputs.
+ */
 import {
   akariJsonPathSchema,
   akariMetadataOperatorSchema,
@@ -18,10 +21,12 @@ export type AkariNormalizedQueryInput = AkariValidatedQueryInput;
 
 export type AkariNormalizedResolveInput = AkariValidatedResolveInput;
 
+/** Parse and default a discover request; throws on contract violations. */
 export function normalizeQueryInput(input: unknown): AkariNormalizedQueryInput {
   return akariQueryInputSchema.parse(input ?? {});
 }
 
+/** Parse and default a resolve request; throws on contract violations. */
 export function normalizeResolveInput(input: unknown): AkariNormalizedResolveInput {
   return akariResolveInputSchema.parse(input ?? {});
 }

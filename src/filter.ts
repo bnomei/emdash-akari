@@ -1,8 +1,12 @@
+/**
+ * Metadata filter evaluation for Akari indexed fields and nested data reads.
+ */
 import { isRecord } from "./input";
 import type { AkariFilter, AkariMetadataFilter, AkariScalar } from "./types";
 
 export type AkariMetadata = Record<string, unknown>;
 
+/** Read a dotted metadata field from the merged entry metadata object. */
 export function readMetadataField(metadata: AkariMetadata, field: string): unknown {
   const segments = field.split(".");
   let current: unknown = metadata;
@@ -15,6 +19,7 @@ export function readMetadataField(metadata: AkariMetadata, field: string): unkno
   return current;
 }
 
+/** Conjoin metadata field predicates; passes when `filter` is absent. */
 export function matchesMetadataFilters(metadata: AkariMetadata, filter?: AkariFilter): boolean {
   if (!filter) return true;
 
@@ -27,6 +32,7 @@ export function matchesMetadataFilters(metadata: AkariMetadata, filter?: AkariFi
   return true;
 }
 
+/** Evaluate one metadata predicate; `$ne`/`$nin` require a scalar stored value. */
 export function matchesMetadataFilter(value: unknown, filter: AkariMetadataFilter): boolean {
   if (!isRecord(filter)) return sameScalar(value, filter);
 
@@ -73,6 +79,7 @@ export function getStringSetFilter(
   return undefined;
 }
 
+/** Project filters to indexed sidecar columns (collection, status, locale, entry_id). */
 export function toIndexedMetadataFilter(
   filter: AkariFilter | undefined,
   allowedFields: Iterable<string> = ["collection", "status", "locale", "entry_id"],

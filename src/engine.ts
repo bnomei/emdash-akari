@@ -1,3 +1,7 @@
+/**
+ * Akari discovery engine: lexical FTS, content scan, reciprocal rank fusion,
+ * facets, sort/projection, and identity resolution.
+ */
 import { search as emdashSearch } from "emdash";
 import type { ContentAccess, SearchOptions, SearchResponse } from "emdash";
 import {
@@ -23,6 +27,7 @@ export type AkariLexicalSearchProvider = (
   options: SearchOptions,
 ) => Promise<SearchResponse>;
 
+/** Engine wiring: content access, lexical provider, scan budget, and resolve margin. */
 export type AkariEngineOptions = {
   content?: ContentAccess;
   lexicalSearch?: AkariLexicalSearchProvider;
@@ -45,6 +50,7 @@ type AkariContentItem = Awaited<ReturnType<ContentAccess["list"]>>["items"][numb
 const defaultAmbiguityMargin = 0.02;
 const contentScanFailurePrefix = "Content scan failed for ";
 
+/** Run discover: fuse lexical and content layers, then sort, limit, facet, and project. */
 export async function runAkariQuery(
   input: AkariValidatedQueryInput,
   options: AkariEngineOptions = {},
@@ -54,10 +60,6 @@ export async function runAkariQuery(
   const facetsByResult = new Map<string, Record<string, string[]>>();
   const collections = resolveCollections(input, options.defaultCollections);
   const lexicalSearch = options.lexicalSearch ?? emdashSearch;
-  // Top-level `collections` is the authoritative scope selector; `filter.collection`
-  // is only a fallback when `collections` is omitted (README). When both are set,
-  // drop `filter.collection` so it cannot post-filter every scanned row out, and
-  // warn so a conflicting selector does not silently produce empty results.
   const queryInput = stripRedundantCollectionFilter(input, warnings);
 
   let lexicalNextCursor: string | undefined;
@@ -96,21 +98,15 @@ export async function runAkariQuery(
     );
   }
 
-  // Fuse without truncating first so an explicit sort orders the full result
-  // set (not just the top relevance slice) before the limit is applied.
   const fused = reciprocalRankFusion(groups);
   const ordered = input.sort?.length ? applySort(fused, input.sort) : fused;
   const limited = ordered.slice(0, input.limit);
-  // Facets are computed from the full (unprojected) results so projection never
-  // hides the values facet buckets are derived from.
   const facets = buildFacetResults(input.facets, limited, facetsByResult);
   const items = input.select?.length
     ? limited.map((item) => projectResult(item, input.select ?? []))
     : limited;
 
-  // Cursor pagination is only coherent for a single search layer. When the
-  // content scan also runs, the fused order has no single continuation token,
-  // so nextCursor is surfaced only when lexical search is the sole layer.
+  // Fused multi-layer results have no single continuation token.
   const nextCursor = ranContentScan ? undefined : lexicalNextCursor;
 
   return {
@@ -128,19 +124,16 @@ export async function runAkariQuery(
   };
 }
 
+/**
+ * Resolve one identity: compare top fused scores and return resolved, ambiguous, or not_found.
+ * Uses a widened candidate pool so client `limit` cannot hide ambiguity.
+ */
 export async function resolveAkariQuery(
   input: AkariValidatedResolveInput,
   options: AkariEngineOptions = {},
 ): Promise<AkariResolveResponse> {
   const maxAlternatives = input.maxAlternatives ?? 3;
-  // Resolve decides ambiguity from the true top-two fused candidates and may
-  // return up to maxAlternatives alternatives, so it must not let a small
-  // client limit (e.g. limit: 1) truncate the fused pool before that decision.
   const resolveLimit = Math.max(input.limit, maxAlternatives + 1, 2);
-  // Resolve decides ambiguity and alternatives from relevance (fused score)
-  // order, so an explicit client sort must not reorder the candidate pool, and
-  // field projection must not strip the score the ambiguity check relies on.
-  // Projection is applied to the returned item/alternatives below instead.
   const response = await runAkariQuery(
     { ...input, limit: resolveLimit, sort: undefined, select: undefined },
     options,
@@ -148,8 +141,6 @@ export async function resolveAkariQuery(
   const [first, second] = response.items;
   const project = (item: AkariResult): AkariResult =>
     input.select?.length ? projectResult(item, input.select) : item;
-  // A requested collection failing to scan means the corpus is incomplete, so a
-  // confident "resolved" cannot be trusted (the true best match may be missing).
   const degraded = (response.warnings ?? []).some((warning) =>
     warning.startsWith(contentScanFailurePrefix),
   );
@@ -170,8 +161,6 @@ export async function resolveAkariQuery(
   if (degraded || (second && firstScore - secondScore <= margin)) {
     return {
       status: "ambiguous",
-      // Honor maxAlternatives exactly (including 0/1); the ambiguous branch
-      // starts at index 0 because there is no single resolved item to exclude.
       alternatives: response.items.slice(0, maxAlternatives).map(project),
       warnings: [
         ...(response.warnings ?? []),
@@ -229,8 +218,7 @@ async function runLexicalSearch(
 
     let matchedPaths: string[] = [];
     if (hasPathFilters) {
-      // Path constraints require the entry body. Without it the FTS hit cannot
-      // be verified against the documented paths contract, so fail closed.
+      // Path evidence requires the entry body; without content access the hit is dropped.
       if (!full) continue;
       const pathResult = evaluatePathFilters(full.data, input.paths);
       if (!pathResult.matched) continue;
@@ -315,8 +303,6 @@ async function scanContent(
         });
 
         for (const item of response.items) {
-          // Enforce fetchLimit within the page too: a provider may return more
-          // rows than the requested limit, and the scan budget is a hard cap.
           if (scanned >= fetchLimit) {
             truncated = true;
             break;
@@ -329,8 +315,6 @@ async function scanContent(
         cursor = response.hasMore ? response.cursor : undefined;
       } while (cursor && scanned < fetchLimit);
 
-      // Warn when the budget stopped the scan while rows remained — either more
-      // pages exist (cursor) or the last page over-returned past the cap.
       if (cursor || truncated) {
         warnings.push(`Content scan reached fetchLimit for ${collection}.`);
       }
@@ -367,10 +351,6 @@ function evaluateContentItem(
   if (!pathResult.matched) return null;
 
   const textScore = input.q ? scoreText(input.q, item) : { score: 1 };
-  // When a query is supplied it must constrain and rank results in every mode,
-  // not just lexical: a structural query carrying a text term should narrow to
-  // entries that match it (previously structural mode kept the whole filter set
-  // with tied scores). With no query, every filter-matched item scores 1.
   if (input.q && textScore.score <= 0) return null;
 
   const score = input.q ? textScore.score : 1;
@@ -451,12 +431,6 @@ const IDENTITY_SELECT_FIELDS = [
   "url",
 ] as const;
 
-/**
- * Project a result down to the caller's `select` fields. `identity` selects the
- * whole identity object; individual identity subfields (e.g. `title`, `url`)
- * project a reduced identity; the remaining names map to top-level result keys.
- * The returned object is intentionally a partial AkariResult.
- */
 function projectResult(item: AkariResult, select: string[]): AkariResult {
   const selected = new Set(select);
   const out: Record<string, unknown> = {};
@@ -484,12 +458,10 @@ function applySort(items: AkariResult[], sort: string[]): AkariResult[] {
     key.startsWith("-") ? { field: key.slice(1), dir: -1 } : { field: key, dir: 1 },
   );
 
-  // Array.prototype.sort is stable, so ties fall back to the fused relevance order.
   return [...items].sort((a, b) => {
     for (const { field, dir } of specs) {
       const av = sortValue(a, field);
       const bv = sortValue(b, field);
-      // Missing values always sort last, regardless of direction.
       if (av === undefined && bv === undefined) continue;
       if (av === undefined) return 1;
       if (bv === undefined) return -1;
@@ -570,16 +542,10 @@ function buildFacetValues(
     else if (key === "status") out[key] = [item.status];
     else if (key === "locale" && item.locale) out[key] = [item.locale];
     else if (key.startsWith("$")) {
-      // Facet buckets must contain values read at the facet path (e.g. "embed"),
-      // not path-filter evidence pointers. If the read yields no stringifiable
-      // values, this item simply contributes nothing to the facet.
       out[key] = readAkariJsonPathValues(item.data, key)
         .map((value) => stringifyFacetValue(value.value))
         .filter((value): value is string => typeof value === "string");
     } else {
-      // Facet on any other metadata/data field (e.g. "category", "author",
-      // "seo.title"): read it from the entry metadata so non-identity fields
-      // produce buckets instead of silently resolving to nothing.
       const values = toFacetValueStrings(
         readMetadataField(buildContentMetadata(collection, item), key),
       );
@@ -608,9 +574,6 @@ function resolveCollections(
 ): string[] {
   const fromFilter = getStringSetFilter(input.filter, "collection");
   const selected = input.collections ?? fromFilter ?? defaults ?? [];
-  // Dedupe so a collection is scanned (and contributes to rank fusion) at most
-  // once; duplicates would otherwise double-scan and inflate fused scores. Set
-  // preserves first-seen order.
   return [...new Set(selected)];
 }
 
@@ -621,6 +584,7 @@ function stripRedundantCollectionFilter<T extends AkariValidatedQueryInput>(
   if (!input.collections || !input.filter || !("collection" in input.filter)) return input;
 
   const { collection: _collection, ...rest } = input.filter;
+  // Top-level `collections` is the scope selector; `filter.collection` is fallback-only.
   warnings.push(
     "filter.collection was ignored because top-level collections was provided; collections is the authoritative scope.",
   );

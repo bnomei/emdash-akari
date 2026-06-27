@@ -157,13 +157,9 @@ test("metadata filters support nested reads and indexed subsets", () => {
 test("metadata $ne and $nin do not vacuously match non-scalar fields", () => {
   const metadata = { seo: { title: "Workers" }, tags: ["featured", "news"], status: "published" };
 
-  // Object-valued field must not satisfy an inequality just because it is not the scalar.
   assert.equal(matchesMetadataFilters(metadata, { seo: { $ne: "Workers" } }), false);
-  // Array-valued field must not satisfy $nin vacuously.
   assert.equal(matchesMetadataFilters(metadata, { tags: { $nin: ["featured"] } }), false);
-  // Scalar inequality still works as expected.
   assert.equal(matchesMetadataFilters(metadata, { status: { $ne: "draft" } }), true);
-  // Missing field is not scalar, so it fails $ne (mirrors the path-layer semantics).
   assert.equal(matchesMetadataFilters(metadata, { locale: { $ne: "en" } }), false);
 });
 
@@ -274,9 +270,7 @@ test("facts replacement deletes every scope in a mixed-entry batch", () => {
   const deletes = statements.filter((s) => s.sql.startsWith("DELETE"));
   const inserts = statements.filter((s) => s.sql.startsWith("INSERT"));
 
-  // One DELETE per distinct (collection, entry_id, locale) scope, not just the first.
   assert.equal(deletes.length, 2);
-  // Each DELETE is scoped to (collection, entry_id, locale) plus the batch's templates.
   assert.deepEqual(
     deletes.map((s) => s.params),
     [
@@ -284,14 +278,10 @@ test("facts replacement deletes every scope in a mixed-entry batch", () => {
       ["pages", "about", "en", "$.blocks[*].type"],
     ],
   );
-  // Every fact is still inserted.
   assert.equal(inserts.length, homeFacts.length + aboutFacts.length);
 });
 
 test("facts replacement from extraction clears stale rows when nothing matches", () => {
-  // Content no longer has any block matching the configured template, so
-  // extraction yields zero facts. The from-extraction helper must still emit a
-  // scoped DELETE so the entry's old sidecar rows are cleared.
   const statements = buildReplaceFactsStatementsFromExtraction({
     collection: "pages",
     entryId: "home",
@@ -305,13 +295,10 @@ test("facts replacement from extraction clears stale rows when nothing matches",
   assert.equal(statements[0].sql.startsWith("DELETE"), true);
   assert.deepEqual(statements[0].params, ["pages", "home", "en"]);
 
-  // For comparison, the low-level call without a target is a no-op (scope unknown).
   assert.deepEqual(buildReplaceFactsStatements([]), []);
 });
 
 test("facts replace is idempotent for duplicate templates / colliding facts", () => {
-  // extractContentFacts dedupes a repeated template so it never emits two facts
-  // with the same primary key.
   const facts = extractContentFacts({
     collection: "c",
     entryId: "e",
@@ -320,10 +307,6 @@ test("facts replace is idempotent for duplicate templates / colliding facts", ()
   });
   assert.equal(facts.length, 1);
 
-  // Even if a caller passes colliding facts directly, INSERT OR REPLACE keeps
-  // the replace from aborting after the DELETE has already cleared the entry.
-  // A non-null locale makes the PK tuple collide (SQLite treats NULLs as
-  // distinct in a unique index, so the collision needs a concrete locale).
   const fact = {
     collection: "c",
     entryId: "e",
@@ -361,12 +344,9 @@ test("facts replacement only deletes the path templates in the batch", () => {
   const statements = buildReplaceFactsStatements(facts);
   const del = statements.find((s) => s.sql.startsWith("DELETE"));
 
-  // DELETE is scoped to the entry AND the single template being replaced, so
-  // facts for other templates (e.g. $.blocks[*].url) on the same entry survive.
   assert.match(del.sql, /path_template IN \(\?\)/);
   assert.deepEqual(del.params, ["pages", "home", "en", "$.blocks[*].type"]);
 
-  // The whole-entry clear (empty facts + target) stays un-templated.
   const clear = buildReplaceFactsStatements([], {
     collection: "pages",
     entryId: "home",
@@ -450,13 +430,9 @@ test("structural match agrees with the runtime evaluator on wildcards and non-st
       .map((row) => row.id);
   };
 
-  // `_` is a literal, not a single-char wildcard: only the row whose title is
-  // literally "a_b" matches, not "axb".
   assert.deepEqual(run("$.title", "a_b"), ["literal"]);
-  // A number value must not match `match` (string-only), unlike the old CAST+LIKE.
   assert.deepEqual(run("$.views", "50"), []);
 
-  // Runtime evaluator agrees.
   assert.equal(
     evaluatePathFilters({ title: "axb" }, [{ path: "$.title", op: "match", value: "a_b" }]).matched,
     false,
@@ -470,7 +446,6 @@ test("structural match agrees with the runtime evaluator on wildcards and non-st
 test("multi-wildcard paths: JS engine and SQL compiler agree", () => {
   const data = { a: [{ b: ["x", "y"] }, { b: ["z"] }] };
 
-  // Parser and the JS evaluator both handle a two-wildcard path.
   assert.equal(parseAkariJsonPath("$.a[*].b[*]").hasWildcard, true);
   assert.equal(
     evaluatePathFilters(data, [{ path: "$.a[*].b[*]", op: "eq", value: "z" }]).matched,
@@ -608,8 +583,6 @@ test("structural numeric range agrees with the runtime evaluator on mixed JSON t
     .all(...compiled.params)
     .map((row) => row.id);
 
-  // Only the numeric price matches; the string "99" must not (SQLite would
-  // otherwise rank TEXT above the numeric literal). Runtime agrees (NaN compare).
   assert.deepEqual(rows, ["num"]);
   assert.equal(
     evaluatePathFilters({ price: "99" }, [{ path: "$.price", op: "gt", value: 50 }]).matched,
@@ -639,7 +612,6 @@ test("structural string range agrees with the runtime evaluator across letter ca
     .all(...compiled.params)
     .map((row) => row.id);
 
-  // Codepoint ('a' = 0x61 > 'Z' = 0x5A): both backends consider "a" > "Z".
   assert.deepEqual(rows, ["lower-a"]);
   assert.equal(
     evaluatePathFilters({ name: "a" }, [{ path: "$.name", op: "gt", value: "Z" }]).matched,
@@ -666,15 +638,10 @@ test("structural contains agrees with the runtime evaluator on arrays", () => {
       .map((row) => row.id);
   };
 
-  // Array: membership only. "ph" is a substring of "alpha" but not an element,
-  // so it must NOT match the array (it does match the scalar string "alphabet").
   assert.deepEqual(run("ph"), ["string"]);
-  // Exact element matches the array; it is also a substring of the scalar string.
   assert.deepEqual(run("alpha"), ["array", "string"]);
-  // JSON separators must never match an array element.
   assert.deepEqual(run(","), []);
 
-  // Runtime evaluator agrees on the array cases.
   assert.equal(
     evaluatePathFilters({ tags: ["alpha", "beta"] }, [{ path: "$.tags", op: "contains", value: "ph" }])
       .matched,
@@ -707,10 +674,8 @@ test("structural ne agrees with the runtime evaluator on non-scalar values", () 
     .all(...compiled.params)
     .map((row) => row.id);
 
-  // Compiled SQL excludes the non-scalar object (and the equal value), matching runtime.
   assert.deepEqual(rows, ["scalar"]);
 
-  // Runtime evaluator: object value is rejected by ne, scalar differing value matches.
   assert.equal(
     evaluatePathFilters({ meta: { id: 1 } }, [{ path: "$.meta", op: "ne", value: "draft" }]).matched,
     false,
@@ -759,8 +724,6 @@ test("duplicate collection names are deduped and do not inflate scores", async (
     { content },
   );
 
-  // Deduping makes the duplicate-collection query identical to the single one:
-  // one entry, same score (not doubled by a second scan + extra RRF rank).
   assert.equal(duplicated.items.length, 1);
   assert.deepEqual(
     duplicated.items.map((item) => [item.identity.id, item.score]),
@@ -779,18 +742,12 @@ test("top-level collections override a conflicting filter.collection with a warn
     { content },
   );
 
-  // filter.collection ("products") would otherwise reject every scanned "pages"
-  // row; instead collections wins, the published page is returned, and a warning
-  // explains the ignored selector.
   assert.ok(response.items.length >= 1);
   assert.ok(response.items.every((item) => item.identity.collection === "pages"));
   assert.ok(response.warnings?.some((w) => w.includes("filter.collection was ignored")));
 });
 
 test("path facets do not borrow filter matchedPaths as bucket values", async () => {
-  // The entry matches the type filter (so matchedPaths is non-empty) but has no
-  // url at the facet path. The url facet must stay empty, not echo evidence
-  // pointers like "$.blocks[0].type" as bucket values.
   const posts = [
     {
       id: "p1",
@@ -853,14 +810,12 @@ test("facets count non-identity data fields like category", async () => {
 });
 
 test("structural mode applies q as a filter and ranking signal", async () => {
-  // A query that matches nothing must return no items, not the whole collection.
   const noMatch = await runAkariQuery(
     normalizeQueryInput({ q: "zzzznonexistent", mode: "structural", collections: ["pages"] }),
     { content },
   );
   assert.equal(noMatch.items.length, 0);
 
-  // A query that matches only one entry narrows the structural result set.
   const narrowed = await runAkariQuery(
     normalizeQueryInput({ q: "workers", mode: "structural", collections: ["pages"] }),
     { content },
@@ -881,7 +836,6 @@ test("content scan enforces fetchLimit even when a provider over-returns a page"
     publishedAt: "2026-02-01T00:00:00.000Z",
   }));
 
-  // Provider ignores the requested limit and returns the whole page at once.
   const overReturningContent = {
     async get(collection, id) {
       return items.find((item) => item.id === id) ?? null;
@@ -896,7 +850,6 @@ test("content scan enforces fetchLimit even when a provider over-returns a page"
     { content: overReturningContent, fetchLimit: 3 },
   );
 
-  // Only fetchLimit rows are scanned, so at most 3 candidates enter the result.
   assert.equal(response.items.length, 3);
   assert.ok(
     response.warnings?.some((w) => w.includes("reached fetchLimit")),
@@ -990,9 +943,6 @@ test("lexical provider and content scan fuse overlapping candidates", async () =
 });
 
 test("lexical post-filter drops hits whose real metadata fails the filter", async () => {
-  // Provider leaks a draft hit (ignores the requested status). The post-filter
-  // must resolve the hit's real status via content.get and drop it, instead of
-  // trusting a status fabricated from the filter constraint.
   const input = normalizeQueryInput({
     q: "about",
     mode: "lexical",
@@ -1013,8 +963,6 @@ test("lexical post-filter drops hits whose real metadata fails the filter", asyn
 });
 
 test("lexical post-filter honors non-equality status filters via real metadata", async () => {
-  // $in is not a plain equality, so status cannot be fabricated from the filter.
-  // The draft hit must be resolved and kept because its real status is in the set.
   const input = normalizeQueryInput({
     q: "zzzznomatch",
     mode: "lexical",
@@ -1036,8 +984,6 @@ test("lexical post-filter honors non-equality status filters via real metadata",
 });
 
 test("lexical leg enforces path filters against the resolved entry body", async () => {
-  // The provider returns the published `home` page, but the path filter requires
-  // a block of type "text" which home does not have. The FTS hit must be dropped.
   const input = normalizeQueryInput({
     q: "workers",
     mode: "lexical",
@@ -1061,7 +1007,6 @@ test("lexical leg enforces path filters against the resolved entry body", async 
 
   const response = await runAkariQuery(input, { content, lexicalSearch });
 
-  // home has hero/embed blocks only; content scan also rejects it, so no candidate survives.
   assert.equal(response.items.length, 0);
 });
 
@@ -1080,7 +1025,6 @@ test("lexical leg drops hits when paths are set but no content access is availab
     ],
   });
 
-  // No content provider: path constraints cannot be verified, so the FTS hit fails closed.
   const response = await runAkariQuery(input, { lexicalSearch });
 
   assert.equal(response.items.length, 0);
@@ -1111,8 +1055,6 @@ test("resolve returns ambiguity when top fused candidates are too close", async 
 });
 
 test("query applies the validated sort parameter to fused results", async () => {
-  // Structural mode gives every matching entry score 1, so ordering is decided
-  // by the sort parameter rather than relevance.
   const ascending = await runAkariQuery(
     normalizeQueryInput({ mode: "structural", collections: ["pages"], sort: ["title"], limit: 10 }),
     { content },
@@ -1140,14 +1082,12 @@ test("lexical-only query surfaces the provider nextCursor for pagination", async
     nextCursor: "page-2",
   });
 
-  // No content access → lexical is the sole layer → pagination is coherent.
   const lexicalOnly = await runAkariQuery(
     normalizeQueryInput({ q: "workers", mode: "lexical", collections: ["pages"], limit: 5 }),
     { lexicalSearch },
   );
   assert.equal(lexicalOnly.nextCursor, "page-2");
 
-  // With content scan running too, the fused order has no single cursor.
   const fused = await runAkariQuery(
     normalizeQueryInput({ q: "workers", mode: "lexical", collections: ["pages"], limit: 5 }),
     { content, lexicalSearch },
@@ -1168,7 +1108,6 @@ test("query projects response items to the selected fields", async () => {
 
   for (const item of response.items) {
     assert.deepEqual(Object.keys(item).sort(), ["identity", "score"]);
-    // Full identity object is preserved when `identity` is selected.
     assert.ok(item.identity.collection);
   }
 });
@@ -1208,9 +1147,7 @@ test("resolve projects item and alternatives by select without losing ambiguity"
 
   const response = await resolveAkariQuery(input, { lexicalSearch, ambiguityMargin: 1 });
 
-  // Ambiguity is still detected (score was not stripped before the decision)...
   assert.equal(response.status, "ambiguous");
-  // ...and the returned alternatives are projected to the selected fields.
   for (const alt of response.alternatives) {
     assert.deepEqual(Object.keys(alt).sort(), ["identity", "score"]);
   }
@@ -1240,8 +1177,6 @@ test("resolve refuses to return resolved when a collection failed to scan", asyn
     { content: flakyContent },
   );
 
-  // The genuine best match might have been in the failed collection "a", so the
-  // single surviving "b" candidate must not be reported as a confident resolution.
   assert.notEqual(response.status, "resolved");
   assert.equal(response.degraded, true);
   assert.ok(response.warnings?.some((w) => w.startsWith("Content scan failed for a")));
@@ -1327,7 +1262,6 @@ test("rank fusion does not let a null content field erase an FTS identity value"
         key: "pages:home:en",
         source: "content",
         result: {
-          // Content record is missing the slug; it must not clobber the FTS slug.
           identity: { collection: "pages", id: "home", locale: "en", slug: null, title: "Workers AI" },
         },
       },

@@ -1,3 +1,6 @@
+/**
+ * Content facts sidecar: extract nested path values and emit scoped replacement SQL.
+ */
 import { readAkariJsonPathValues } from "./paths";
 
 export type AkariFactValueType =
@@ -69,12 +72,10 @@ export type ExtractFactsOptions = {
   updatedAt?: string;
 };
 
+/** Materialize facts for configured path templates from one entry's JSON body. */
 export function extractContentFacts(options: ExtractFactsOptions): AkariContentFact[] {
   const facts: AkariContentFact[] = [];
 
-  // Dedupe templates: a duplicated path template would otherwise produce facts
-  // with identical (collection, entry_id, locale, path_template, full_path)
-  // primary keys, colliding on insert.
   for (const pathTemplate of [...new Set(options.pathTemplates)]) {
     const values = readAkariJsonPathValues(options.data, pathTemplate);
 
@@ -101,12 +102,7 @@ export function extractContentFacts(options: ExtractFactsOptions): AkariContentF
 }
 
 /**
- * Extract facts for an entry and build the replacement statements in one step,
- * always deriving the replacement scope from the extraction options. Unlike
- * calling `buildReplaceFactsStatements(extractContentFacts(options))` directly,
- * this still emits a clearing DELETE when extraction yields zero facts (e.g. the
- * content changed so no configured path matches anymore), so stale sidecar rows
- * for that entry never linger.
+ * Extract facts and build replacement SQL, clearing stale rows when extraction is empty.
  */
 export function buildReplaceFactsStatementsFromExtraction(
   options: ExtractFactsOptions,
@@ -119,12 +115,14 @@ export function buildReplaceFactsStatementsFromExtraction(
   });
 }
 
+/**
+ * Emit DELETE/INSERT OR REPLACE statements scoped to each batch's entry and templates.
+ * Empty facts with `target` clear the whole entry; without `target` returns `[]`.
+ */
 export function buildReplaceFactsStatements(
   facts: AkariContentFact[],
   target?: AkariFactsReplacementTarget,
 ): AkariFactSqlStatement[] {
-  // No facts: fall back to the explicit target as a whole-entry clear (the
-  // un-templated DELETE removes every template for that entry).
   if (facts.length === 0) {
     if (!target) return [];
     return [
@@ -135,11 +133,6 @@ export function buildReplaceFactsStatements(
     ];
   }
 
-  // Replace must delete every scope it is about to rewrite, but only the
-  // path templates present in this batch — re-indexing a subset of templates
-  // must not wipe an entry's facts for templates it did not touch. A batch may
-  // also mix multiple (collection, entry_id, locale) tuples, so emit one DELETE
-  // per distinct scope, each constrained to that scope's templates.
   const scopes = collectFactScopes(facts);
 
   return [
@@ -150,8 +143,6 @@ export function buildReplaceFactsStatements(
       params: [scope.collection, scope.entryId, scope.locale ?? null, ...scope.pathTemplates],
     })),
     ...facts.map((fact) => ({
-      // INSERT OR REPLACE keeps the replace idempotent even if the caller passes
-      // facts that collide on the primary key (e.g. from a duplicated template).
       sql: `INSERT OR REPLACE INTO _emdash_content_facts (
   collection,
   entry_id,
@@ -217,6 +208,7 @@ function placeholders(length: number): string {
   return Array.from({ length }, () => "?").join(", ");
 }
 
+/** Classify a JSON value for the facts sidecar `value_type` column. */
 export function getFactValueType(value: unknown): AkariFactValueType {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";

@@ -1,3 +1,7 @@
+/**
+ * Akari request/response types inferred from Zod schemas plus shared identity,
+ * facet, and plugin option shapes used across engine and integrator code.
+ */
 import type { z } from "zod";
 import type { AkariEngineOptions, AkariLexicalSearchProvider } from "./engine";
 import type { AkariFtsPlanInput, AkariFtsRow, AkariSqlPlan } from "./fts";
@@ -79,13 +83,13 @@ export type AkariResolveInput = z.input<typeof akariResolveInputSchema>;
 
 export type AkariValidatedResolveInput = z.output<typeof akariResolveInputSchema>;
 
+/** Resolve outcome; `degraded` signals an incomplete corpus (collection scan failure). */
 export type AkariResolveResponse =
   | {
       status: "resolved";
       item: AkariResult;
       alternatives?: AkariResult[];
       warnings?: string[];
-      /** True when one or more requested collections failed to scan. */
       degraded?: boolean;
     }
   | {
@@ -93,7 +97,6 @@ export type AkariResolveResponse =
       item?: undefined;
       alternatives?: AkariResult[];
       warnings?: string[];
-      /** True when one or more requested collections failed to scan. */
       degraded?: boolean;
     };
 

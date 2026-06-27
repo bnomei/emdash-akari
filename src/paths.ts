@@ -1,3 +1,6 @@
+/**
+ * Akari JSON path parsing and in-memory evaluation for nested content filters.
+ */
 import { isRecord } from "./input";
 import type { AkariPathFilter, AkariScalar } from "./types";
 
@@ -27,6 +30,7 @@ type AkariWildcardFilterGroup = {
 
 const identifierPattern = /[A-Za-z_][A-Za-z0-9_]*/y;
 
+/** Parse an Akari JSON path (`$.blocks[*].type`) into traversal tokens. */
 export function parseAkariJsonPath(path: string): AkariParsedJsonPath {
   if (!path.startsWith("$")) throw new Error(`Invalid Akari JSON path: ${path}`);
 
@@ -77,10 +81,15 @@ export function toSqliteJsonPath(path: string | AkariParsedJsonPath): string | n
   return parsed.hasWildcard ? null : parsed.source;
 }
 
+/** Read all values at a path, expanding `[*]` wildcards into concrete evidence paths. */
 export function readAkariJsonPathValues(value: unknown, path: string): AkariPathValue[] {
   return readPathValues(value, parseAkariJsonPath(path).tokens, "$");
 }
 
+/**
+ * Evaluate structural path filters against entry JSON; returns concrete evidence paths.
+ * Wildcard filters sharing a parent array are evaluated on the same element.
+ */
 export function evaluatePathFilters(
   data: unknown,
   filters: AkariPathFilter[] | undefined,
@@ -242,10 +251,7 @@ function sameScalar(value: unknown, expected: AkariScalar): boolean {
 function compare(value: unknown, expected: string | number): number {
   if (typeof value === "number" && typeof expected === "number") return value - expected;
   if (typeof value === "string" && typeof expected === "string") {
-    // Use codepoint ordering (not localeCompare) so range operators agree with
-    // the structural SQL compiler, which compares strings under SQLite's default
-    // BINARY collation. localeCompare would order "a" before "Z" while SQLite
-    // orders "Z" before "a", diverging the two backends for the same filter.
+    // Codepoint order matches SQLite BINARY collation used by the structural compiler.
     if (value < expected) return -1;
     if (value > expected) return 1;
     return 0;

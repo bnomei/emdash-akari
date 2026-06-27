@@ -1,3 +1,4 @@
+/** Plugin identity, pagination limits, and route capability metadata. */
 export const PLUGIN_ID = "akari";
 export const PLUGIN_VERSION = "0.1.2";
 export const PACKAGE_NAME = "@bnomei/emdash-akari";

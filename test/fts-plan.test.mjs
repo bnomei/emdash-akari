@@ -93,9 +93,6 @@ test(
   "FTS plan join is locale-safe and does not mix a stale cross-locale FTS row",
   { skip: skipWithoutFts5 },
   () => {
-    // ec_*.id is a PRIMARY KEY in EmDash, so a single id resolves to one locale.
-    // The `AND f.locale IS c.locale` predicate is defense-in-depth: a stale FTS
-    // row whose locale drifted from its content row must not pair across locale.
     const db = new DatabaseSync(":memory:");
     db.exec(`
     CREATE TABLE ec_pages (
@@ -123,7 +120,6 @@ test(
       ('page1', 'de', 'English Title', 'Workers content in English.');
   `);
 
-    // Query without a locale filter so only the join predicate guards locale.
     const plan = buildEmDashFts5Plan({
       collection: "pages",
       query: "workers",
@@ -137,7 +133,6 @@ test(
       .all(...plan.params)
       .map((row) => ({ ...row }));
 
-    // The FTS row (locale 'de') must not join the content row (locale 'en').
     assert.equal(rows.length, 0);
   },
 );
@@ -190,10 +185,8 @@ test(
     const mapped = mapFtsRows("pages", rows);
     const snippet = mapped[0].snippet;
 
-    // The injected tag must be neutralized...
     assert.ok(!/<img/i.test(snippet), `snippet still contains raw <img>: ${snippet}`);
     assert.ok(snippet.includes("&lt;img"), `snippet should escape the tag: ${snippet}`);
-    // ...while the intended highlight markers survive.
     assert.ok(snippet.includes("<mark>"), `snippet should keep <mark>: ${snippet}`);
   },
 );
@@ -202,14 +195,10 @@ test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
   assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');
   assert.equal(escapeFts5Query("workers OR d1"), "workers OR d1");
-  // Lowercase operator words are ordinary terms: keep prefix-term normalization
-  // instead of routing them through the raw-operator branch.
   assert.equal(escapeFts5Query("salt and pepper"), '"salt"* "and"* "pepper"*');
   assert.equal(escapeFts5Query("not done"), '"not"* "done"*');
   assert.equal(escapeFts5Query('workers "ai"'), '"workers"* """ai"""*');
   assert.equal(escapeFts5Query("   "), "");
-  // Lone/empty/unbalanced quotes must not produce a malformed MATCH string;
-  // they collapse to "" so buildEmDashFts5Plan returns null.
   assert.equal(escapeFts5Query('"'), "");
   assert.equal(escapeFts5Query('""'), "");
   assert.equal(escapeFts5Query('"   "'), "");
@@ -238,7 +227,6 @@ test("FTS plan omits the status predicate when status is absent", () => {
   assert.doesNotMatch(plan.sql, /AND c\.status = \?/);
   assert.ok(!plan.params.includes("published"));
 
-  // An explicit status is honored.
   const draftPlan = buildEmDashFts5Plan({
     collection: "pages",
     query: "workers",

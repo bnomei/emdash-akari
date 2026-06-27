@@ -1,3 +1,6 @@
+/**
+ * Compile Akari path filters into SQLite/D1 structural SQL (`json_extract`, `json_each`).
+ */
 import {
   parseAkariJsonPath,
   toSqliteJsonPath,
@@ -52,12 +55,7 @@ const sqlColumnReferencePattern =
   /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
 /**
- * Compile Akari path filters into a SQLite/D1 structural plan.
- *
- * Filters that share the same first wildcard parent are compiled against the
- * same outer `json_each` join, matching the JS evaluator's same-element
- * semantics. Additional wildcards deeper in a path compile to nested
- * array-guarded `json_each` joins.
+ * Compile multiple path filters; groups share outer `json_each` joins by first wildcard parent.
  */
 export function compileStructuralFilters(
   filters: AkariPathFilter[] | undefined,
@@ -106,6 +104,7 @@ export function compileStructuralFilters(
   };
 }
 
+/** Compile a single path filter into joins, WHERE clauses, and bound parameters. */
 export function compileStructuralFilter(
   filter: AkariPathFilter,
   options: AkariStructuralCompileOptions = {},
@@ -302,10 +301,8 @@ function compilePathPredicate(
           params: [...typeExpression.params, ...typeExpression.params],
         };
       }
-      // Runtime `ne` (paths.ts) requires a scalar value, so exclude object/array
-      // JSON here too; otherwise SQL `!=` would match structured values the
-      // in-engine evaluator rejects, diverging the two execution paths.
       return {
+        // Align with runtime `ne`: scalar-only, no object/array vacuous matches.
         sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} != ?`,
         params: [...typeExpression.params, ...valueExpression.params, filter.value],
       };
@@ -315,17 +312,11 @@ function compilePathPredicate(
         params: [...valueExpression.params, ...filter.value],
       };
     case "nin":
-      // Mirror runtime `nin`, which also requires a scalar value.
       return {
         sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} NOT IN (${placeholders(filter.value.length)})`,
         params: [...typeExpression.params, ...valueExpression.params, ...filter.value],
       };
     case "contains":
-      // Mirror runtime `containsValue`: substring for a text value, element
-      // membership for an array, no match otherwise. The type guard keeps SQL
-      // from running a JSON-text substring over a serialized array (which would
-      // match separators/brackets) and ensures json_each only sees real arrays
-      // (SQLite short-circuits AND/OR, so it is not evaluated for non-arrays).
       return {
         sql: `((${typeExpression.sql} = 'text' AND instr(${valueExpression.sql}, ?) > 0) OR (${typeExpression.sql} = 'array' AND EXISTS (SELECT 1 FROM json_each(${valueExpression.sql}) AS _akari_contains WHERE _akari_contains.value = ?)))`,
         params: [
@@ -338,10 +329,6 @@ function compilePathPredicate(
         ],
       };
     case "match":
-      // Mirror runtime `match`: a case-insensitive literal substring over string
-      // values only. instr (not LIKE) keeps any `%`/`_` in the value literal
-      // instead of treating them as wildcards, and the json_type guard excludes
-      // numbers/booleans that the runtime evaluator rejects.
       return {
         sql: `${typeExpression.sql} = 'text' AND instr(LOWER(${valueExpression.sql}), ?) > 0`,
         params: [...typeExpression.params, ...valueExpression.params, filter.value.toLowerCase()],
@@ -363,10 +350,7 @@ function compileRangePredicate(
   valueExpression: AkariJsonSqlExpression,
   typeExpression: AkariJsonSqlExpression,
 ): { sql: string; params: AkariScalar[] } {
-  // Runtime `compare` returns NaN (no match) when the stored JSON type does not
-  // match the filter value's type, so guard the SQL comparison by json_type.
-  // Without this, SQLite would rank a TEXT value above any numeric literal
-  // (storage-class ordering), matching a string like "99" against `gt 50`.
+  // Guard by json_type so mixed-type JSON does not diverge from the runtime evaluator.
   const typeGuard =
     typeof value === "number"
       ? `${typeExpression.sql} IN ('integer', 'real')`
