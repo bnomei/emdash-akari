@@ -275,15 +275,45 @@ test("facts replacement deletes every scope in a mixed-entry batch", () => {
 
   // One DELETE per distinct (collection, entry_id, locale) scope, not just the first.
   assert.equal(deletes.length, 2);
+  // Each DELETE is scoped to (collection, entry_id, locale) plus the batch's templates.
   assert.deepEqual(
     deletes.map((s) => s.params),
     [
-      ["pages", "home", "en"],
-      ["pages", "about", "en"],
+      ["pages", "home", "en", "$.blocks[*].type"],
+      ["pages", "about", "en", "$.blocks[*].type"],
     ],
   );
   // Every fact is still inserted.
   assert.equal(inserts.length, homeFacts.length + aboutFacts.length);
+});
+
+test("facts replacement only deletes the path templates in the batch", () => {
+  const facts = extractContentFacts({
+    collection: "pages",
+    entryId: "home",
+    locale: "en",
+    status: "published",
+    data: fixtures.pages[0].data,
+    pathTemplates: ["$.blocks[*].type"],
+  });
+
+  const statements = buildReplaceFactsStatements(facts);
+  const del = statements.find((s) => s.sql.startsWith("DELETE"));
+
+  // DELETE is scoped to the entry AND the single template being replaced, so
+  // facts for other templates (e.g. $.blocks[*].url) on the same entry survive.
+  assert.match(del.sql, /path_template IN \(\?\)/);
+  assert.deepEqual(del.params, ["pages", "home", "en", "$.blocks[*].type"]);
+
+  // The whole-entry clear (empty facts + target) stays un-templated.
+  const clear = buildReplaceFactsStatements([], {
+    collection: "pages",
+    entryId: "home",
+    locale: "en",
+  });
+  assert.equal(clear.length, 1);
+  assert.doesNotMatch(clear[0].sql, /path_template/);
+  assert.deepEqual(clear[0].params, ["pages", "home", "en"]);
 });
 
 test("structural SQL compiler runs direct and wildcard path filters in SQLite", () => {

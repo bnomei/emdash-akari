@@ -101,18 +101,31 @@ export function buildReplaceFactsStatements(
   facts: AkariContentFact[],
   target?: AkariFactsReplacementTarget,
 ): AkariFactSqlStatement[] {
-  // Replace must delete every scope it is about to rewrite. A batch may mix
-  // multiple (collection, entry_id, locale) tuples, so emit one DELETE per
-  // distinct scope instead of only the first entry's. When no facts are given,
-  // fall back to the explicit target (clears a single entry's sidecar).
-  const scopes =
-    facts.length > 0 ? collectFactScopes(facts) : target ? [target] : [];
-  if (scopes.length === 0) return [];
+  // No facts: fall back to the explicit target as a whole-entry clear (the
+  // un-templated DELETE removes every template for that entry).
+  if (facts.length === 0) {
+    if (!target) return [];
+    return [
+      {
+        sql: "DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '')",
+        params: [target.collection, target.entryId, target.locale ?? null],
+      },
+    ];
+  }
+
+  // Replace must delete every scope it is about to rewrite, but only the
+  // path templates present in this batch — re-indexing a subset of templates
+  // must not wipe an entry's facts for templates it did not touch. A batch may
+  // also mix multiple (collection, entry_id, locale) tuples, so emit one DELETE
+  // per distinct scope, each constrained to that scope's templates.
+  const scopes = collectFactScopes(facts);
 
   return [
     ...scopes.map((scope) => ({
-      sql: "DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '')",
-      params: [scope.collection, scope.entryId, scope.locale ?? null],
+      sql: `DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '') AND path_template IN (${placeholders(
+        scope.pathTemplates.length,
+      )})`,
+      params: [scope.collection, scope.entryId, scope.locale ?? null, ...scope.pathTemplates],
     })),
     ...facts.map((fact) => ({
       sql: `INSERT INTO _emdash_content_facts (
@@ -149,21 +162,35 @@ export function buildReplaceFactsStatements(
   ];
 }
 
-function collectFactScopes(facts: AkariContentFact[]): AkariFactsReplacementTarget[] {
-  const scopes = new Map<string, AkariFactsReplacementTarget>();
+type AkariFactScope = AkariFactsReplacementTarget & { pathTemplates: string[] };
+
+function collectFactScopes(facts: AkariContentFact[]): AkariFactScope[] {
+  const scopes = new Map<string, AkariFactScope & { templateSet: Set<string> }>();
 
   for (const fact of facts) {
     const key = `${fact.collection}\u0000${fact.entryId}\u0000${fact.locale ?? ""}`;
-    if (!scopes.has(key)) {
-      scopes.set(key, {
+    let scope = scopes.get(key);
+    if (!scope) {
+      scope = {
         collection: fact.collection,
         entryId: fact.entryId,
         locale: fact.locale,
-      });
+        pathTemplates: [],
+        templateSet: new Set<string>(),
+      };
+      scopes.set(key, scope);
+    }
+    if (!scope.templateSet.has(fact.pathTemplate)) {
+      scope.templateSet.add(fact.pathTemplate);
+      scope.pathTemplates.push(fact.pathTemplate);
     }
   }
 
-  return [...scopes.values()];
+  return [...scopes.values()].map(({ templateSet: _templateSet, ...scope }) => scope);
+}
+
+function placeholders(length: number): string {
+  return Array.from({ length }, () => "?").join(", ");
 }
 
 export function getFactValueType(value: unknown): AkariFactValueType {
