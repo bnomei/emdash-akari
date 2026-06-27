@@ -344,8 +344,10 @@ test("structural SQL compiler runs direct and wildcard path filters in SQLite", 
     { dataExpression: "e.data" },
   );
   assert.deepEqual(direct.joins, []);
-  assert.deepEqual(direct.where, ["LOWER(CAST(json_extract(e.data, ?) AS TEXT)) LIKE ?"]);
-  assert.deepEqual(direct.params, ["$.title", "%workers%"]);
+  assert.deepEqual(direct.where, [
+    "json_type(e.data, ?) = 'text' AND instr(LOWER(json_extract(e.data, ?)), ?) > 0",
+  ]);
+  assert.deepEqual(direct.params, ["$.title", "$.title", "workers"]);
 
   const wildcard = compileStructuralFilters(
     [
@@ -386,6 +388,42 @@ test("structural SQL compiler runs direct and wildcard path filters in SQLite", 
     .map((row) => ({ ...row }));
 
   assert.deepEqual(rows, [{ id: "home" }]);
+});
+
+test("structural match agrees with the runtime evaluator on wildcards and non-strings", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("axb", JSON.stringify({ title: "axb", views: 1500 }));
+  insert.run("literal", JSON.stringify({ title: "a_b", views: 1 }));
+
+  const run = (path, value) => {
+    const compiled = compileStructuralFilter(
+      { path, op: "match", value },
+      { dataExpression: "e.data" },
+    );
+    const sql = `SELECT e.id FROM entries AS e WHERE ${compiled.where.join(" AND ")} ORDER BY e.id`;
+    return db
+      .prepare(sql)
+      .all(...compiled.params)
+      .map((row) => row.id);
+  };
+
+  // `_` is a literal, not a single-char wildcard: only the row whose title is
+  // literally "a_b" matches, not "axb".
+  assert.deepEqual(run("$.title", "a_b"), ["literal"]);
+  // A number value must not match `match` (string-only), unlike the old CAST+LIKE.
+  assert.deepEqual(run("$.views", "50"), []);
+
+  // Runtime evaluator agrees.
+  assert.equal(
+    evaluatePathFilters({ title: "axb" }, [{ path: "$.title", op: "match", value: "a_b" }]).matched,
+    false,
+  );
+  assert.equal(
+    evaluatePathFilters({ views: 1500 }, [{ path: "$.views", op: "match", value: "50" }]).matched,
+    false,
+  );
 });
 
 test("structural contains agrees with the runtime evaluator on arrays", () => {

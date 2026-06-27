@@ -247,9 +247,13 @@ function compilePathPredicate(
         ],
       };
     case "match":
+      // Mirror runtime `match`: a case-insensitive literal substring over string
+      // values only. instr (not LIKE) keeps any `%`/`_` in the value literal
+      // instead of treating them as wildcards, and the json_type guard excludes
+      // numbers/booleans that the runtime evaluator rejects.
       return {
-        sql: `LOWER(CAST(${valueExpression.sql} AS TEXT)) LIKE ?`,
-        params: [...valueExpression.params, `%${filter.value.toLowerCase()}%`],
+        sql: `${typeExpression.sql} = 'text' AND instr(LOWER(${valueExpression.sql}), ?) > 0`,
+        params: [...typeExpression.params, ...valueExpression.params, filter.value.toLowerCase()],
       };
     case "gt":
       return {
