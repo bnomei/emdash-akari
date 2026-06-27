@@ -590,6 +590,67 @@ test("query applies the validated sort parameter to fused results", async () => 
   );
 });
 
+test("query projects response items to the selected fields", async () => {
+  const response = await runAkariQuery(
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["pages"],
+      select: ["identity", "score"],
+      limit: 10,
+    }),
+    { content },
+  );
+
+  for (const item of response.items) {
+    assert.deepEqual(Object.keys(item).sort(), ["identity", "score"]);
+    // Full identity object is preserved when `identity` is selected.
+    assert.ok(item.identity.collection);
+  }
+});
+
+test("query projection can reduce identity to chosen subfields", async () => {
+  const response = await runAkariQuery(
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["pages"],
+      select: ["title", "score"],
+      limit: 10,
+    }),
+    { content },
+  );
+
+  const item = response.items[0];
+  assert.deepEqual(Object.keys(item).sort(), ["identity", "score"]);
+  assert.deepEqual(Object.keys(item.identity), ["title"]);
+});
+
+test("resolve projects item and alternatives by select without losing ambiguity", async () => {
+  const input = normalizeResolveInput({
+    q: "workers ai search",
+    mode: "lexical",
+    collections: ["pages"],
+    select: ["identity", "score"],
+    limit: 1,
+    maxAlternatives: 2,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "home", slug: "home", locale: "en", title: "Home", score: 10 },
+      { collection: "pages", id: "about", slug: "about", locale: "en", title: "About", score: 9 },
+    ],
+  });
+
+  const response = await resolveAkariQuery(input, { lexicalSearch, ambiguityMargin: 1 });
+
+  // Ambiguity is still detected (score was not stripped before the decision)...
+  assert.equal(response.status, "ambiguous");
+  // ...and the returned alternatives are projected to the selected fields.
+  for (const alt of response.alternatives) {
+    assert.deepEqual(Object.keys(alt).sort(), ["identity", "score"]);
+  }
+});
+
 test("resolve detects ambiguity even when input limit is 1", async () => {
   const input = normalizeResolveInput({
     q: "workers ai search",

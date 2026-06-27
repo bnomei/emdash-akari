@@ -79,8 +79,13 @@ export async function runAkariQuery(
   // set (not just the top relevance slice) before the limit is applied.
   const fused = reciprocalRankFusion(groups);
   const ordered = input.sort?.length ? applySort(fused, input.sort) : fused;
-  const items = ordered.slice(0, input.limit);
-  const facets = buildFacetResults(input.facets, items, facetsByResult);
+  const limited = ordered.slice(0, input.limit);
+  // Facets are computed from the full (unprojected) results so projection never
+  // hides the values facet buckets are derived from.
+  const facets = buildFacetResults(input.facets, limited, facetsByResult);
+  const items = input.select?.length
+    ? limited.map((item) => projectResult(item, input.select ?? []))
+    : limited;
 
   return {
     items,
@@ -106,12 +111,16 @@ export async function resolveAkariQuery(
   // client limit (e.g. limit: 1) truncate the fused pool before that decision.
   const resolveLimit = Math.max(input.limit, maxAlternatives + 1, 2);
   // Resolve decides ambiguity and alternatives from relevance (fused score)
-  // order, so an explicit client sort must not reorder the candidate pool here.
+  // order, so an explicit client sort must not reorder the candidate pool, and
+  // field projection must not strip the score the ambiguity check relies on.
+  // Projection is applied to the returned item/alternatives below instead.
   const response = await runAkariQuery(
-    { ...input, limit: resolveLimit, sort: undefined },
+    { ...input, limit: resolveLimit, sort: undefined, select: undefined },
     options,
   );
   const [first, second] = response.items;
+  const project = (item: AkariResult): AkariResult =>
+    input.select?.length ? projectResult(item, input.select) : item;
 
   if (!first) {
     return {
@@ -128,7 +137,7 @@ export async function resolveAkariQuery(
   if (second && firstScore - secondScore <= margin) {
     return {
       status: "ambiguous",
-      alternatives: response.items.slice(0, Math.max(maxAlternatives, 2)),
+      alternatives: response.items.slice(0, Math.max(maxAlternatives, 2)).map(project),
       warnings: [
         ...(response.warnings ?? []),
         "Top candidates are too close to resolve automatically.",
@@ -138,8 +147,8 @@ export async function resolveAkariQuery(
 
   return {
     status: "resolved",
-    item: first,
-    alternatives: response.items.slice(1, 1 + maxAlternatives),
+    item: project(first),
+    alternatives: response.items.slice(1, 1 + maxAlternatives).map(project),
     warnings: response.warnings,
   };
 }
@@ -368,6 +377,53 @@ function toRankedGroup(candidates: EngineCandidate[], source: string): AkariRank
     rank: candidate.rank ?? index + 1,
     score: candidate.score,
   }));
+}
+
+const RESULT_LEVEL_SELECT_FIELDS = [
+  "score",
+  "snippet",
+  "matchedFields",
+  "matchedPaths",
+  "updatedAt",
+  "publishedAt",
+] as const;
+
+const IDENTITY_SELECT_FIELDS = [
+  "collection",
+  "id",
+  "slug",
+  "locale",
+  "status",
+  "title",
+  "url",
+] as const;
+
+/**
+ * Project a result down to the caller's `select` fields. `identity` selects the
+ * whole identity object; individual identity subfields (e.g. `title`, `url`)
+ * project a reduced identity; the remaining names map to top-level result keys.
+ * The returned object is intentionally a partial AkariResult.
+ */
+function projectResult(item: AkariResult, select: string[]): AkariResult {
+  const selected = new Set(select);
+  const out: Record<string, unknown> = {};
+
+  if (selected.has("identity")) {
+    out.identity = item.identity;
+  } else {
+    const identityFields = IDENTITY_SELECT_FIELDS.filter((field) => selected.has(field));
+    if (identityFields.length > 0) {
+      const identity: Record<string, unknown> = {};
+      for (const field of identityFields) identity[field] = item.identity[field];
+      out.identity = identity;
+    }
+  }
+
+  for (const field of RESULT_LEVEL_SELECT_FIELDS) {
+    if (selected.has(field)) out[field] = item[field];
+  }
+
+  return out as AkariResult;
 }
 
 function applySort(items: AkariResult[], sort: string[]): AkariResult[] {
