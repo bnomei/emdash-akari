@@ -34,12 +34,15 @@ type AkariWildcardFilterGroup = {
 };
 
 const sqlIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const sqlColumnReferencePattern =
+  /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
 export function compileStructuralFilters(
   filters: AkariPathFilter[] | undefined,
   options: AkariStructuralCompileOptions = {},
 ): AkariStructuralSqlPlan {
   const dataExpression = options.dataExpression ?? "e.data";
+  assertColumnReference(dataExpression, "data expression");
   const baseJoinPrefix = options.joinPrefix ?? "akari_path";
   const plans: AkariStructuralSqlPlan[] = [];
   const wildcardGroups = new Map<string, AkariWildcardFilterGroup>();
@@ -86,6 +89,7 @@ export function compileStructuralFilter(
   options: AkariStructuralCompileOptions = {},
 ): AkariStructuralSqlPlan {
   const dataExpression = options.dataExpression ?? "e.data";
+  assertColumnReference(dataExpression, "data expression");
   const joinPrefix = options.joinPrefix ?? "akari_path";
   assertSqlIdentifier(joinPrefix, "join prefix");
 
@@ -268,4 +272,8 @@ function placeholders(length: number): string {
 
 function assertSqlIdentifier(value: string, label: string): void {
   if (!sqlIdentifierPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`);
+}
+
+function assertColumnReference(value: string, label: string): void {
+  if (!sqlColumnReferencePattern.test(value)) throw new Error(`Invalid ${label}: ${value}`);
 }
