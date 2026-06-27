@@ -609,6 +609,27 @@ test("content fallback executes private structural discovery without D1", async 
   ]);
 });
 
+test("duplicate collection names are deduped and do not inflate scores", async () => {
+  const paths = [{ path: "$.blocks[*].type", op: "eq", value: "embed" }];
+
+  const duplicated = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["pages", "pages"], paths, limit: 10 }),
+    { content },
+  );
+  const single = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["pages"], paths, limit: 10 }),
+    { content },
+  );
+
+  // Deduping makes the duplicate-collection query identical to the single one:
+  // one entry, same score (not doubled by a second scan + extra RRF rank).
+  assert.equal(duplicated.items.length, 1);
+  assert.deepEqual(
+    duplicated.items.map((item) => [item.identity.id, item.score]),
+    single.items.map((item) => [item.identity.id, item.score]),
+  );
+});
+
 test("top-level collections override a conflicting filter.collection with a warning", async () => {
   const response = await runAkariQuery(
     normalizeQueryInput({

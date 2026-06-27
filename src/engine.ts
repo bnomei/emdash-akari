@@ -607,7 +607,11 @@ function resolveCollections(
   defaults: string[] | undefined,
 ): string[] {
   const fromFilter = getStringSetFilter(input.filter, "collection");
-  return input.collections ?? fromFilter ?? defaults ?? [];
+  const selected = input.collections ?? fromFilter ?? defaults ?? [];
+  // Dedupe so a collection is scanned (and contributes to rank fusion) at most
+  // once; duplicates would otherwise double-scan and inflate fused scores. Set
+  // preserves first-seen order.
+  return [...new Set(selected)];
 }
 
 function stripRedundantCollectionFilter<T extends AkariValidatedQueryInput>(
