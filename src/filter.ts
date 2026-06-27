@@ -31,9 +31,10 @@ export function matchesMetadataFilter(value: unknown, filter: AkariMetadataFilte
   if (!isRecord(filter)) return sameScalar(value, filter);
 
   if ("$eq" in filter) return sameScalar(value, filter.$eq);
-  if ("$ne" in filter) return !sameScalar(value, filter.$ne);
+  if ("$ne" in filter) return isAkariScalar(value) && !sameScalar(value, filter.$ne);
   if ("$in" in filter) return filter.$in.some((item) => sameScalar(value, item));
-  if ("$nin" in filter) return filter.$nin.every((item) => !sameScalar(value, item));
+  if ("$nin" in filter)
+    return isAkariScalar(value) && filter.$nin.every((item) => !sameScalar(value, item));
   if ("$lt" in filter) return compare(value, filter.$lt) < 0;
   if ("$lte" in filter) return compare(value, filter.$lte) <= 0;
   if ("$gt" in filter) return compare(value, filter.$gt) > 0;

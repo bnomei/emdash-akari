@@ -153,6 +153,19 @@ test("metadata filters support nested reads and indexed subsets", () => {
   );
 });
 
+test("metadata $ne and $nin do not vacuously match non-scalar fields", () => {
+  const metadata = { seo: { title: "Workers" }, tags: ["featured", "news"], status: "published" };
+
+  // Object-valued field must not satisfy an inequality just because it is not the scalar.
+  assert.equal(matchesMetadataFilters(metadata, { seo: { $ne: "Workers" } }), false);
+  // Array-valued field must not satisfy $nin vacuously.
+  assert.equal(matchesMetadataFilters(metadata, { tags: { $nin: ["featured"] } }), false);
+  // Scalar inequality still works as expected.
+  assert.equal(matchesMetadataFilters(metadata, { status: { $ne: "draft" } }), true);
+  // Missing field is not scalar, so it fails $ne (mirrors the path-layer semantics).
+  assert.equal(matchesMetadataFilters(metadata, { locale: { $ne: "en" } }), false);
+});
+
 test("facts extraction materializes configured structural paths", () => {
   const facts = extractContentFacts({
     collection: "pages",
