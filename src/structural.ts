@@ -37,6 +37,16 @@ const sqlIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const sqlColumnReferencePattern =
   /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
+/**
+ * Compile Akari path filters into a single-join SQLite/D1 structural plan.
+ *
+ * Each path may contain at most one `[*]` wildcard segment (compiled to one
+ * `json_each` join). The schema and the discover/resolve JS evaluator accept
+ * multi-wildcard paths (e.g. `$.a[*].b[*]`), but this single-join compiler
+ * cannot express them and throws a descriptive error — evaluate such paths with
+ * the JS engine or materialized facts. Wrap calls in try/catch if you forward
+ * caller-supplied paths directly.
+ */
 export function compileStructuralFilters(
   filters: AkariPathFilter[] | undefined,
   options: AkariStructuralCompileOptions = {},
@@ -133,6 +143,18 @@ function toWildcardFilterGroup(
 ): AkariWildcardFilterGroup {
   const wildcardIndex = parsed.tokens.findIndex((token) => token.type === "wildcard");
   if (wildcardIndex === -1) throw new Error(`Expected wildcard path for ${parsed.source}`);
+
+  // The single-join SQL compiler supports exactly one [*] per path. Reject
+  // multi-wildcard paths up front with a clear, actionable error (the schema
+  // permits them and the discover/resolve JS evaluator handles them, but they
+  // cannot be compiled to a single json_each join).
+  const wildcardCount = parsed.tokens.filter((token) => token.type === "wildcard").length;
+  if (wildcardCount > 1) {
+    throw new Error(
+      `Structural SQL compiler supports a single [*] wildcard per path; "${parsed.source}" has ${wildcardCount}. ` +
+        `Evaluate multi-wildcard paths with the discover/resolve engine or materialized facts instead.`,
+    );
+  }
 
   const beforeWildcard = parsed.tokens.slice(0, wildcardIndex);
   const afterWildcard = parsed.tokens.slice(wildcardIndex + 1);

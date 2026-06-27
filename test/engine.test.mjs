@@ -426,6 +426,24 @@ test("structural match agrees with the runtime evaluator on wildcards and non-st
   );
 });
 
+test("multi-wildcard paths: JS engine evaluates, SQL compiler throws a clear error", () => {
+  const data = { a: [{ b: ["x", "y"] }, { b: ["z"] }] };
+
+  // Parser and the JS evaluator both handle a two-wildcard path.
+  assert.equal(parseAkariJsonPath("$.a[*].b[*]").hasWildcard, true);
+  assert.equal(
+    evaluatePathFilters(data, [{ path: "$.a[*].b[*]", op: "eq", value: "z" }]).matched,
+    true,
+  );
+
+  // The single-join structural SQL compiler rejects it with a descriptive error
+  // instead of an opaque internal throw.
+  assert.throws(
+    () => compileStructuralFilters([{ path: "$.a[*].b[*]", op: "exists" }]),
+    /single \[\*\] wildcard per path/,
+  );
+});
+
 test("structural string range agrees with the runtime evaluator across letter case", () => {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
