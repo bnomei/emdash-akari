@@ -55,6 +55,13 @@ export function escapeFts5Query(query: string): string {
   return terms.map((term) => `"${term}"*`).join(" ");
 }
 
+/**
+ * Build an EmDash-compatible FTS5 SQL plan. When `status` is omitted it defaults
+ * to `"published"`, matching EmDash's own `search()` (which also binds
+ * `c.status = 'published'` for an absent status); pass an explicit `status` to
+ * query a different status. There is no "all statuses" shortcut, by design, so
+ * this helper stays consistent with EmDash's canonical FTS behavior.
+ */
 export function buildEmDashFts5Plan(input: AkariFtsPlanInput): AkariSqlPlan | null {
   const ftsQuery = escapeFts5Query(input.query);
   if (!ftsQuery) return null;

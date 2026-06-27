@@ -214,6 +214,30 @@ test("FTS query escaping documents lexical filter semantics", () => {
   );
 });
 
+test("FTS plan defaults missing status to published, matching EmDash search", () => {
+  const plan = buildEmDashFts5Plan({
+    collection: "pages",
+    query: "workers",
+    searchableFields: ["title"],
+  });
+
+  assert.ok(plan);
+  // The status clause is always present and defaults to published.
+  assert.match(plan.sql, /AND c\.status = \?/);
+  assert.ok(plan.params.includes("published"));
+
+  // An explicit status is honored.
+  const draftPlan = buildEmDashFts5Plan({
+    collection: "pages",
+    query: "workers",
+    searchableFields: ["title"],
+    status: "draft",
+  });
+  assert.ok(draftPlan);
+  assert.ok(draftPlan.params.includes("draft"));
+  assert.ok(!draftPlan.params.includes("published"));
+});
+
 test("FTS plan validates identifiers before raw SQL interpolation", () => {
   assert.throws(() =>
     buildEmDashFts5Plan({
