@@ -75,7 +75,11 @@ export async function runAkariQuery(
     );
   }
 
-  const items = reciprocalRankFusion(groups, { limit: input.limit });
+  // Fuse without truncating first so an explicit sort orders the full result
+  // set (not just the top relevance slice) before the limit is applied.
+  const fused = reciprocalRankFusion(groups);
+  const ordered = input.sort?.length ? applySort(fused, input.sort) : fused;
+  const items = ordered.slice(0, input.limit);
   const facets = buildFacetResults(input.facets, items, facetsByResult);
 
   return {
@@ -101,7 +105,12 @@ export async function resolveAkariQuery(
   // return up to maxAlternatives alternatives, so it must not let a small
   // client limit (e.g. limit: 1) truncate the fused pool before that decision.
   const resolveLimit = Math.max(input.limit, maxAlternatives + 1, 2);
-  const response = await runAkariQuery({ ...input, limit: resolveLimit }, options);
+  // Resolve decides ambiguity and alternatives from relevance (fused score)
+  // order, so an explicit client sort must not reorder the candidate pool here.
+  const response = await runAkariQuery(
+    { ...input, limit: resolveLimit, sort: undefined },
+    options,
+  );
   const [first, second] = response.items;
 
   if (!first) {
@@ -359,6 +368,51 @@ function toRankedGroup(candidates: EngineCandidate[], source: string): AkariRank
     rank: candidate.rank ?? index + 1,
     score: candidate.score,
   }));
+}
+
+function applySort(items: AkariResult[], sort: string[]): AkariResult[] {
+  const specs = sort.map((key) =>
+    key.startsWith("-") ? { field: key.slice(1), dir: -1 } : { field: key, dir: 1 },
+  );
+
+  // Array.prototype.sort is stable, so ties fall back to the fused relevance order.
+  return [...items].sort((a, b) => {
+    for (const { field, dir } of specs) {
+      const av = sortValue(a, field);
+      const bv = sortValue(b, field);
+      // Missing values always sort last, regardless of direction.
+      if (av === undefined && bv === undefined) continue;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      if (cmp !== 0) return cmp * dir;
+    }
+    return 0;
+  });
+}
+
+function sortValue(item: AkariResult, field: string): string | number | undefined {
+  switch (field) {
+    case "score":
+      return item.score;
+    case "updatedAt":
+      return item.updatedAt;
+    case "publishedAt":
+      return item.publishedAt;
+    case "title":
+      return item.identity.title;
+    case "collection":
+      return item.identity.collection;
+    case "status":
+      return item.identity.status;
+    case "locale":
+      return item.identity.locale;
+    default:
+      return undefined;
+  }
 }
 
 function buildFacetResults(

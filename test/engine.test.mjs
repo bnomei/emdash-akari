@@ -568,6 +568,28 @@ test("resolve returns ambiguity when top fused candidates are too close", async 
   assert.equal(response.alternatives?.length, 2);
 });
 
+test("query applies the validated sort parameter to fused results", async () => {
+  // Structural mode gives every matching entry score 1, so ordering is decided
+  // by the sort parameter rather than relevance.
+  const ascending = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["pages"], sort: ["title"], limit: 10 }),
+    { content },
+  );
+  assert.deepEqual(
+    ascending.items.map((item) => item.identity.id),
+    ["about", "home"],
+  );
+
+  const descending = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["pages"], sort: ["-title"], limit: 10 }),
+    { content },
+  );
+  assert.deepEqual(
+    descending.items.map((item) => item.identity.id),
+    ["home", "about"],
+  );
+});
+
 test("resolve detects ambiguity even when input limit is 1", async () => {
   const input = normalizeResolveInput({
     q: "workers ai search",
