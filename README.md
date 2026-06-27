@@ -364,11 +364,11 @@ Supported path operators:
 - `contains`, `match`
 - `lt`, `lte`, `gt`, `gte`
 
-Paths may contain `[*]` wildcards. The `discover`/`resolve` engine and
-materialized facts support multiple wildcards in one path (e.g.
-`$.a[*].b[*]`); the exported single-join structural SQL compiler
-(`compileStructuralFilters`) supports at most one `[*]` per path and throws a
-descriptive error otherwise — use the engine or facts for multi-wildcard paths.
+Paths may contain `[*]` wildcards. The `discover`/`resolve` engine, materialized
+facts, and exported structural SQL compiler (`compileStructuralFilters`) support
+multiple wildcards in one path (for example, `$.a[*].b[*]`). The SQL compiler
+uses an outer `json_each` join for the first wildcard and nested array-guarded
+`json_each` joins for deeper wildcards.
 
 `ne`/`nin` only match scalar values. `contains` is a substring test for strings
 and an element-membership test for arrays. `match` is a case-insensitive literal

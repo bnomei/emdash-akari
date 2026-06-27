@@ -25,11 +25,25 @@ type AkariJsonSqlExpression = {
   params: AkariScalar[];
 };
 
+type AkariJsonSqlSource = {
+  valueSql: string;
+  typeSql: string;
+  pathSql: string;
+};
+
+type AkariCompiledTokenPredicate = {
+  joins: string[];
+  where: string;
+  joinParams: AkariScalar[];
+  whereParams: AkariScalar[];
+  matchedPathExpression: string;
+};
+
 type AkariWildcardFilterGroup = {
   eachPath: string;
   filters: Array<{
     filter: AkariPathFilter;
-    suffixPath: string;
+    suffixTokens: AkariPathToken[];
   }>;
 };
 
@@ -38,14 +52,12 @@ const sqlColumnReferencePattern =
   /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
 /**
- * Compile Akari path filters into a single-join SQLite/D1 structural plan.
+ * Compile Akari path filters into a SQLite/D1 structural plan.
  *
- * Each path may contain at most one `[*]` wildcard segment (compiled to one
- * `json_each` join). The schema and the discover/resolve JS evaluator accept
- * multi-wildcard paths (e.g. `$.a[*].b[*]`), but this single-join compiler
- * cannot express them and throws a descriptive error — evaluate such paths with
- * the JS engine or materialized facts. Wrap calls in try/catch if you forward
- * caller-supplied paths directly.
+ * Filters that share the same first wildcard parent are compiled against the
+ * same outer `json_each` join, matching the JS evaluator's same-element
+ * semantics. Additional wildcards deeper in a path compile to nested
+ * array-guarded `json_each` joins.
  */
 export function compileStructuralFilters(
   filters: AkariPathFilter[] | undefined,
@@ -144,18 +156,6 @@ function toWildcardFilterGroup(
   const wildcardIndex = parsed.tokens.findIndex((token) => token.type === "wildcard");
   if (wildcardIndex === -1) throw new Error(`Expected wildcard path for ${parsed.source}`);
 
-  // The single-join SQL compiler supports exactly one [*] per path. Reject
-  // multi-wildcard paths up front with a clear, actionable error (the schema
-  // permits them and the discover/resolve JS evaluator handles them, but they
-  // cannot be compiled to a single json_each join).
-  const wildcardCount = parsed.tokens.filter((token) => token.type === "wildcard").length;
-  if (wildcardCount > 1) {
-    throw new Error(
-      `Structural SQL compiler supports a single [*] wildcard per path; "${parsed.source}" has ${wildcardCount}. ` +
-        `Evaluate multi-wildcard paths with the discover/resolve engine or materialized facts instead.`,
-    );
-  }
-
   const beforeWildcard = parsed.tokens.slice(0, wildcardIndex);
   const afterWildcard = parsed.tokens.slice(wildcardIndex + 1);
   return {
@@ -163,7 +163,7 @@ function toWildcardFilterGroup(
     filters: [
       {
         filter,
-        suffixPath: tokensToSqlitePath(afterWildcard),
+        suffixTokens: afterWildcard,
       },
     ],
   };
@@ -177,38 +177,107 @@ function compileWildcardFilterGroup(
   const alias = joinPrefix;
   assertSqlIdentifier(alias, "join prefix");
 
+  const joins = [
+    `JOIN json_each(${dataExpression}, ?) AS ${alias} ON json_type(${dataExpression}, ?) = 'array'`,
+  ];
+  const joinParams: AkariScalar[] = [group.eachPath, group.eachPath];
   const where: string[] = [];
   const whereParams: AkariScalar[] = [];
   const matchedPathExpressions: string[] = [];
 
-  for (const { filter, suffixPath } of group.filters) {
-    const valueExpression =
-      suffixPath === "$"
-        ? { sql: `${alias}.value`, params: [] }
-        : { sql: `json_extract(${alias}.value, ?)`, params: [suffixPath] };
-    const typeExpression =
-      suffixPath === "$"
-        ? { sql: `${alias}.type`, params: [] }
-        : { sql: `json_type(${alias}.value, ?)`, params: [suffixPath] };
-    const compiled = compilePathPredicate(filter, valueExpression, typeExpression);
-
-    where.push(compiled.sql);
-    whereParams.push(...compiled.params);
-    matchedPathExpressions.push(
-      suffixPath === "$"
-        ? `${alias}.fullkey`
-        : `(${alias}.fullkey || '${suffixPath.slice(1).replaceAll("'", "''")}')`,
+  for (const [index, { filter, suffixTokens }] of group.filters.entries()) {
+    const compiled = compileTokenPredicate(
+      filter,
+      {
+        valueSql: `${alias}.value`,
+        typeSql: `${alias}.type`,
+        pathSql: `${alias}.fullkey`,
+      },
+      suffixTokens,
+      `${alias}_nested_${index}`,
     );
+
+    joins.push(...compiled.joins);
+    joinParams.push(...compiled.joinParams);
+    where.push(compiled.where);
+    whereParams.push(...compiled.whereParams);
+    matchedPathExpressions.push(compiled.matchedPathExpression);
   }
 
   return {
-    joins: [`JOIN json_each(${dataExpression}, ?) AS ${alias}`],
+    joins,
     where,
-    params: [group.eachPath, ...whereParams],
-    joinParams: [group.eachPath],
+    params: [...joinParams, ...whereParams],
+    joinParams,
     whereParams,
     matchedPathExpressions,
   };
+}
+
+function compileTokenPredicate(
+  filter: AkariPathFilter,
+  source: AkariJsonSqlSource,
+  tokens: AkariPathToken[],
+  aliasPrefix: string,
+): AkariCompiledTokenPredicate {
+  const wildcardIndex = tokens.findIndex((token) => token.type === "wildcard");
+
+  if (wildcardIndex === -1) {
+    const suffixPath = tokensToSqlitePath(tokens);
+    const valueExpression =
+      suffixPath === "$"
+        ? { sql: source.valueSql, params: [] }
+        : { sql: `json_extract(${source.valueSql}, ?)`, params: [suffixPath] };
+    const typeExpression =
+      suffixPath === "$"
+        ? { sql: source.typeSql, params: [] }
+        : { sql: `json_type(${source.valueSql}, ?)`, params: [suffixPath] };
+    const compiled = compilePathPredicate(filter, valueExpression, typeExpression);
+    const matchedPathExpression =
+      suffixPath === "$"
+        ? source.pathSql
+        : `(${source.pathSql} || '${suffixPath.slice(1).replaceAll("'", "''")}')`;
+
+    return {
+      joins: [],
+      where: compiled.sql,
+      joinParams: [],
+      whereParams: compiled.params,
+      matchedPathExpression,
+    };
+  }
+
+  const alias = aliasPrefix;
+  assertSqlIdentifier(alias, "nested join alias");
+  const beforeWildcard = tokens.slice(0, wildcardIndex);
+  const afterWildcard = tokens.slice(wildcardIndex + 1);
+  const eachPath = tokensToSqlitePath(beforeWildcard);
+  const safeSource = jsonTraversableExpression(source.valueSql, source.typeSql);
+  const nested = compileTokenPredicate(
+    filter,
+    {
+      valueSql: `${alias}.value`,
+      typeSql: `${alias}.type`,
+      pathSql: `(${source.pathSql} || substr(${alias}.fullkey, 2))`,
+    },
+    afterWildcard,
+    `${alias}_0`,
+  );
+
+  return {
+    joins: [
+      `JOIN json_each(${safeSource}, ?) AS ${alias} ON json_type(${safeSource}, ?) = 'array'`,
+      ...nested.joins,
+    ],
+    where: nested.where,
+    joinParams: [eachPath, eachPath, ...nested.joinParams],
+    whereParams: nested.whereParams,
+    matchedPathExpression: nested.matchedPathExpression,
+  };
+}
+
+function jsonTraversableExpression(sql: string, typeSql: string): string {
+  return `(CASE WHEN ${typeSql} IN ('array', 'object') THEN ${sql} ELSE 'null' END)`;
 }
 
 function compilePathPredicate(
@@ -312,7 +381,7 @@ function tokensToSqlitePath(tokens: AkariPathToken[]): string {
   return tokens.reduce((path, token) => {
     if (token.type === "property") return `${path}.${token.key}`;
     if (token.type === "index") return `${path}[${token.index}]`;
-    throw new Error("Nested wildcard paths are not supported by the single-join compiler yet");
+    throw new Error("Unexpected wildcard token while building a concrete SQLite JSON path");
   }, "$");
 }
 

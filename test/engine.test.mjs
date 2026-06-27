@@ -396,8 +396,10 @@ test("structural SQL compiler runs direct and wildcard path filters in SQLite", 
     { dataExpression: "e.data" },
   );
 
-  assert.deepEqual(wildcard.joins, ["JOIN json_each(e.data, ?) AS akari_path_0"]);
-  assert.deepEqual(wildcard.params, ["$.blocks", "$.type", "embed", "$.url"]);
+  assert.deepEqual(wildcard.joins, [
+    "JOIN json_each(e.data, ?) AS akari_path_0 ON json_type(e.data, ?) = 'array'",
+  ]);
+  assert.deepEqual(wildcard.params, ["$.blocks", "$.blocks", "$.type", "embed", "$.url"]);
 
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
@@ -465,7 +467,7 @@ test("structural match agrees with the runtime evaluator on wildcards and non-st
   );
 });
 
-test("multi-wildcard paths: JS engine evaluates, SQL compiler throws a clear error", () => {
+test("multi-wildcard paths: JS engine and SQL compiler agree", () => {
   const data = { a: [{ b: ["x", "y"] }, { b: ["z"] }] };
 
   // Parser and the JS evaluator both handle a two-wildcard path.
@@ -475,12 +477,118 @@ test("multi-wildcard paths: JS engine evaluates, SQL compiler throws a clear err
     true,
   );
 
-  // The single-join structural SQL compiler rejects it with a descriptive error
-  // instead of an opaque internal throw.
-  assert.throws(
-    () => compileStructuralFilters([{ path: "$.a[*].b[*]", op: "exists" }]),
-    /single \[\*\] wildcard per path/,
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("hit", JSON.stringify(data));
+  insert.run("miss", JSON.stringify({ a: [{ b: ["x", "y"] }, { b: [] }] }));
+  insert.run("object", JSON.stringify({ a: [{ b: { x: "z" } }] }));
+  insert.run("scalar", JSON.stringify({ a: [{ b: "z" }] }));
+
+  const compiled = compileStructuralFilters(
+    [{ path: "$.a[*].b[*]", op: "eq", value: "z" }],
+    { dataExpression: "e.data" },
   );
+  const sql = `
+    SELECT DISTINCT e.id
+    FROM entries AS e
+    ${compiled.joins.join("\n")}
+    WHERE ${compiled.where.join(" AND ")}
+    ORDER BY e.id
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  assert.deepEqual(rows, ["hit"]);
+  assert.equal(
+    evaluatePathFilters({ a: [{ b: { x: "z" } }] }, [{ path: "$.a[*].b[*]", op: "eq", value: "z" }])
+      .matched,
+    false,
+  );
+  assert.equal(
+    evaluatePathFilters({ a: [{ b: "z" }] }, [{ path: "$.a[*].b[*]", op: "eq", value: "z" }])
+      .matched,
+    false,
+  );
+
+  const pathRows = db
+    .prepare(
+      `
+        SELECT ${compiled.matchedPathExpressions[0]} AS matched_path
+        FROM entries AS e
+        ${compiled.joins.join("\n")}
+        WHERE e.id = 'hit' AND ${compiled.where.join(" AND ")}
+        ORDER BY matched_path
+      `,
+    )
+    .all(...compiled.params)
+    .map((row) => row.matched_path);
+
+  assert.deepEqual(pathRows, ["$.a[1].b[0]"]);
+});
+
+test("multi-wildcard SQL keeps same first-wildcard grouping", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("same", JSON.stringify({ a: [{ kind: "target", b: ["z"] }] }));
+  insert.run(
+    "split",
+    JSON.stringify({ a: [{ kind: "target", b: [] }, { kind: "other", b: ["z"] }] }),
+  );
+
+  const filters = [
+    { path: "$.a[*].kind", op: "eq", value: "target" },
+    { path: "$.a[*].b[*]", op: "eq", value: "z" },
+  ];
+  const compiled = compileStructuralFilters(filters, { dataExpression: "e.data" });
+  const sql = `
+    SELECT DISTINCT e.id
+    FROM entries AS e
+    ${compiled.joins.join("\n")}
+    WHERE ${compiled.where.join(" AND ")}
+    ORDER BY e.id
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  assert.deepEqual(rows, ["same"]);
+  assert.equal(
+    evaluatePathFilters(
+      { a: [{ kind: "target", b: [] }, { kind: "other", b: ["z"] }] },
+      filters,
+    ).matched,
+    false,
+  );
+});
+
+test("consecutive multi-wildcard SQL does not traverse JSON-looking scalar strings", () => {
+  const filters = [{ path: "$.a[*][*]", op: "eq", value: "z" }];
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("array", JSON.stringify({ a: [["z"]] }));
+  insert.run("string", JSON.stringify({ a: ['["z"]'] }));
+
+  const compiled = compileStructuralFilters(filters, { dataExpression: "e.data" });
+  const sql = `
+    SELECT DISTINCT e.id
+    FROM entries AS e
+    ${compiled.joins.join("\n")}
+    WHERE ${compiled.where.join(" AND ")}
+    ORDER BY e.id
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  assert.deepEqual(rows, ["array"]);
+  assert.equal(evaluatePathFilters({ a: ['["z"]'] }, filters).matched, false);
 });
 
 test("structural numeric range agrees with the runtime evaluator on mixed JSON types", () => {
