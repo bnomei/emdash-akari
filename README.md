@@ -365,6 +365,14 @@ Supported path operators:
 - `contains`, `match`
 - `lt`, `lte`, `gt`, `gte`
 
+`ne`/`nin` only match scalar values. `contains` is a substring test for strings
+and an element-membership test for arrays. `match` is a case-insensitive literal
+substring over string values (any `%`/`_` are literal, not wildcards). String
+range comparisons (`lt`/`lte`/`gt`/`gte`) use codepoint ordering — the same
+ordering SQLite applies under its default `BINARY` collation — so results are
+identical whether a filter is evaluated in JS (`discover`) or compiled to D1
+SQLite. These semantics are intentionally aligned across both backends.
+
 For paths that are queried often, Akari exports facts helpers:
 
 ```ts

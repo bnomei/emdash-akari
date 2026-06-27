@@ -241,8 +241,15 @@ function sameScalar(value: unknown, expected: AkariScalar): boolean {
 
 function compare(value: unknown, expected: string | number): number {
   if (typeof value === "number" && typeof expected === "number") return value - expected;
-  if (typeof value === "string" && typeof expected === "string")
-    return value.localeCompare(expected);
+  if (typeof value === "string" && typeof expected === "string") {
+    // Use codepoint ordering (not localeCompare) so range operators agree with
+    // the structural SQL compiler, which compares strings under SQLite's default
+    // BINARY collation. localeCompare would order "a" before "Z" while SQLite
+    // orders "Z" before "a", diverging the two backends for the same filter.
+    if (value < expected) return -1;
+    if (value > expected) return 1;
+    return 0;
+  }
   return Number.NaN;
 }
 

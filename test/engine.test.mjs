@@ -426,6 +426,32 @@ test("structural match agrees with the runtime evaluator on wildcards and non-st
   );
 });
 
+test("structural string range agrees with the runtime evaluator across letter case", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)").run(
+    "lower-a",
+    JSON.stringify({ name: "a" }),
+  );
+
+  const compiled = compileStructuralFilter(
+    { path: "$.name", op: "gt", value: "Z" },
+    { dataExpression: "e.data" },
+  );
+  const sql = `SELECT e.id FROM entries AS e WHERE ${compiled.where.join(" AND ")}`;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  // Codepoint ('a' = 0x61 > 'Z' = 0x5A): both backends consider "a" > "Z".
+  assert.deepEqual(rows, ["lower-a"]);
+  assert.equal(
+    evaluatePathFilters({ name: "a" }, [{ path: "$.name", op: "gt", value: "Z" }]).matched,
+    true,
+  );
+});
+
 test("structural contains agrees with the runtime evaluator on arrays", () => {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
