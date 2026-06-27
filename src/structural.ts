@@ -230,9 +230,21 @@ function compilePathPredicate(
         params: [...typeExpression.params, ...valueExpression.params, ...filter.value],
       };
     case "contains":
+      // Mirror runtime `containsValue`: substring for a text value, element
+      // membership for an array, no match otherwise. The type guard keeps SQL
+      // from running a JSON-text substring over a serialized array (which would
+      // match separators/brackets) and ensures json_each only sees real arrays
+      // (SQLite short-circuits AND/OR, so it is not evaluated for non-arrays).
       return {
-        sql: `instr(CAST(${valueExpression.sql} AS TEXT), ?) > 0`,
-        params: [...valueExpression.params, filter.value],
+        sql: `((${typeExpression.sql} = 'text' AND instr(${valueExpression.sql}, ?) > 0) OR (${typeExpression.sql} = 'array' AND EXISTS (SELECT 1 FROM json_each(${valueExpression.sql}) AS _akari_contains WHERE _akari_contains.value = ?)))`,
+        params: [
+          ...typeExpression.params,
+          ...valueExpression.params,
+          filter.value,
+          ...typeExpression.params,
+          ...valueExpression.params,
+          filter.value,
+        ],
       };
     case "match":
       return {

@@ -388,6 +388,47 @@ test("structural SQL compiler runs direct and wildcard path filters in SQLite", 
   assert.deepEqual(rows, [{ id: "home" }]);
 });
 
+test("structural contains agrees with the runtime evaluator on arrays", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("array", JSON.stringify({ tags: ["alpha", "beta"] }));
+  insert.run("string", JSON.stringify({ tags: "alphabet" }));
+
+  const run = (value) => {
+    const compiled = compileStructuralFilter(
+      { path: "$.tags", op: "contains", value },
+      { dataExpression: "e.data" },
+    );
+    const sql = `SELECT e.id FROM entries AS e WHERE ${compiled.where.join(" AND ")} ORDER BY e.id`;
+    return db
+      .prepare(sql)
+      .all(...compiled.params)
+      .map((row) => row.id);
+  };
+
+  // Array: membership only. "ph" is a substring of "alpha" but not an element,
+  // so it must NOT match the array (it does match the scalar string "alphabet").
+  assert.deepEqual(run("ph"), ["string"]);
+  // Exact element matches the array; it is also a substring of the scalar string.
+  assert.deepEqual(run("alpha"), ["array", "string"]);
+  // JSON separators must never match an array element.
+  assert.deepEqual(run(","), []);
+
+  // Runtime evaluator agrees on the array cases.
+  assert.equal(
+    evaluatePathFilters({ tags: ["alpha", "beta"] }, [{ path: "$.tags", op: "contains", value: "ph" }])
+      .matched,
+    false,
+  );
+  assert.equal(
+    evaluatePathFilters({ tags: ["alpha", "beta"] }, [
+      { path: "$.tags", op: "contains", value: "alpha" },
+    ]).matched,
+    true,
+  );
+});
+
 test("structural ne agrees with the runtime evaluator on non-scalar values", () => {
   const compiled = compileStructuralFilter(
     { path: "$.meta", op: "ne", value: "draft" },
