@@ -208,6 +208,15 @@ test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("not done"), '"not"* "done"*');
   assert.equal(escapeFts5Query('workers "ai"'), '"workers"* """ai"""*');
   assert.equal(escapeFts5Query("   "), "");
+  // Lone/empty/unbalanced quotes must not produce a malformed MATCH string;
+  // they collapse to "" so buildEmDashFts5Plan returns null.
+  assert.equal(escapeFts5Query('"'), "");
+  assert.equal(escapeFts5Query('""'), "");
+  assert.equal(escapeFts5Query('"   "'), "");
+  assert.equal(
+    buildEmDashFts5Plan({ collection: "pages", query: '"', searchableFields: ["title"] }),
+    null,
+  );
   assert.equal(
     buildEmDashFts5Plan({
       collection: "pages",

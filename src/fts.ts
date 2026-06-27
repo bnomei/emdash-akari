@@ -47,15 +47,24 @@ export function escapeFts5Query(query: string): string {
   if (!trimmed) return "";
 
   if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
-    const inner = trimmed.slice(1, -1);
+    // An empty (or whitespace-only) phrase is not a valid MATCH expression;
+    // treat it as no query so buildEmDashFts5Plan short-circuits to null.
+    const inner = trimmed.slice(1, -1).trim();
+    if (!inner) return "";
     return `"${inner.replace(doubleQuotePattern, '""')}"`;
   }
 
   const escaped = trimmed.replace(doubleQuotePattern, '""');
   if (ftsOperatorsPattern.test(trimmed)) return escaped;
 
-  const terms = escaped.split(whitespaceSplitPattern).filter(Boolean);
-  return terms.map((term) => `"${term}"*`).join(" ");
+  // Build prefix-term phrases from the raw words, dropping any term that has no
+  // characters other than quotes (e.g. a lone `"`), which would otherwise emit a
+  // malformed phrase like `""""*`. If nothing survives, treat as an empty query.
+  const terms = trimmed
+    .split(whitespaceSplitPattern)
+    .filter((term) => term.replaceAll('"', "").length > 0);
+  if (terms.length === 0) return "";
+  return terms.map((term) => `"${term.replace(doubleQuotePattern, '""')}"*`).join(" ");
 }
 
 /**
