@@ -278,6 +278,7 @@ async function scanContent(
     try {
       let cursor: string | undefined;
       let scanned = 0;
+      let truncated = false;
 
       do {
         const remaining = fetchLimit - scanned;
@@ -289,6 +290,12 @@ async function scanContent(
         });
 
         for (const item of response.items) {
+          // Enforce fetchLimit within the page too: a provider may return more
+          // rows than the requested limit, and the scan budget is a hard cap.
+          if (scanned >= fetchLimit) {
+            truncated = true;
+            break;
+          }
           scanned += 1;
           const candidate = evaluateContentItem(collection, item, input, options);
           if (candidate) out.push(candidate);
@@ -297,7 +304,11 @@ async function scanContent(
         cursor = response.hasMore ? response.cursor : undefined;
       } while (cursor && scanned < fetchLimit);
 
-      if (cursor) warnings.push(`Content scan reached fetchLimit for ${collection}.`);
+      // Warn when the budget stopped the scan while rows remained — either more
+      // pages exist (cursor) or the last page over-returned past the cap.
+      if (cursor || truncated) {
+        warnings.push(`Content scan reached fetchLimit for ${collection}.`);
+      }
     } catch (error) {
       warnings.push(`Content scan failed for ${collection}: ${getErrorMessage(error)}.`);
     }

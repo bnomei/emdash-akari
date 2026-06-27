@@ -447,6 +447,41 @@ test("content fallback executes private structural discovery without D1", async 
   ]);
 });
 
+test("content scan enforces fetchLimit even when a provider over-returns a page", async () => {
+  const items = Array.from({ length: 10 }, (_, index) => ({
+    id: `item-${index}`,
+    type: "pages",
+    slug: `item-${index}`,
+    status: "published",
+    locale: "en",
+    data: { title: `Item ${index}`, blocks: [{ type: "text", text: "body" }] },
+    updatedAt: "2026-02-01T00:00:00.000Z",
+    publishedAt: "2026-02-01T00:00:00.000Z",
+  }));
+
+  // Provider ignores the requested limit and returns the whole page at once.
+  const overReturningContent = {
+    async get(collection, id) {
+      return items.find((item) => item.id === id) ?? null;
+    },
+    async list() {
+      return { items, hasMore: false };
+    },
+  };
+
+  const response = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["pages"], limit: 20 }),
+    { content: overReturningContent, fetchLimit: 3 },
+  );
+
+  // Only fetchLimit rows are scanned, so at most 3 candidates enter the result.
+  assert.equal(response.items.length, 3);
+  assert.ok(
+    response.warnings?.some((w) => w.includes("reached fetchLimit")),
+    "expected a fetchLimit warning",
+  );
+});
+
 test("content fallback follows content pagination during structural discovery", async () => {
   const input = normalizeQueryInput({
     mode: "structural",
