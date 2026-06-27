@@ -43,6 +43,7 @@ type EngineCandidate = {
 type AkariContentItem = Awaited<ReturnType<ContentAccess["list"]>>["items"][number];
 
 const defaultAmbiguityMargin = 0.02;
+const contentScanFailurePrefix = "Content scan failed for ";
 
 export async function runAkariQuery(
   input: AkariValidatedQueryInput,
@@ -137,12 +138,18 @@ export async function resolveAkariQuery(
   const [first, second] = response.items;
   const project = (item: AkariResult): AkariResult =>
     input.select?.length ? projectResult(item, input.select) : item;
+  // A requested collection failing to scan means the corpus is incomplete, so a
+  // confident "resolved" cannot be trusted (the true best match may be missing).
+  const degraded = (response.warnings ?? []).some((warning) =>
+    warning.startsWith(contentScanFailurePrefix),
+  );
 
   if (!first) {
     return {
       status: "not_found",
       alternatives: [],
       warnings: response.warnings ?? ["No candidate matched the requested identity constraints."],
+      degraded: degraded || undefined,
     };
   }
 
@@ -150,7 +157,7 @@ export async function resolveAkariQuery(
   const firstScore = first.score ?? 0;
   const secondScore = second?.score ?? 0;
 
-  if (second && firstScore - secondScore <= margin) {
+  if (degraded || (second && firstScore - secondScore <= margin)) {
     return {
       status: "ambiguous",
       // Honor maxAlternatives exactly (including 0/1); the ambiguous branch
@@ -158,8 +165,11 @@ export async function resolveAkariQuery(
       alternatives: response.items.slice(0, maxAlternatives).map(project),
       warnings: [
         ...(response.warnings ?? []),
-        "Top candidates are too close to resolve automatically.",
+        degraded
+          ? "Resolution corpus was incomplete: one or more collections failed to scan."
+          : "Top candidates are too close to resolve automatically.",
       ],
+      degraded: degraded || undefined,
     };
   }
 
@@ -315,7 +325,7 @@ async function scanContent(
         warnings.push(`Content scan reached fetchLimit for ${collection}.`);
       }
     } catch (error) {
-      warnings.push(`Content scan failed for ${collection}: ${getErrorMessage(error)}.`);
+      warnings.push(`${contentScanFailurePrefix}${collection}: ${getErrorMessage(error)}.`);
     }
   }
 

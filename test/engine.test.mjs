@@ -961,6 +961,37 @@ test("resolve projects item and alternatives by select without losing ambiguity"
   }
 });
 
+test("resolve refuses to return resolved when a collection failed to scan", async () => {
+  const bItem = {
+    id: "b1",
+    type: "b",
+    slug: "b1",
+    status: "published",
+    locale: "en",
+    data: { title: "B One" },
+  };
+  const flakyContent = {
+    async get(_collection, id) {
+      return id === "b1" ? bItem : null;
+    },
+    async list(collection) {
+      if (collection === "a") throw new Error("missing table");
+      return { items: [bItem], hasMore: false };
+    },
+  };
+
+  const response = await resolveAkariQuery(
+    normalizeResolveInput({ mode: "structural", collections: ["a", "b"] }),
+    { content: flakyContent },
+  );
+
+  // The genuine best match might have been in the failed collection "a", so the
+  // single surviving "b" candidate must not be reported as a confident resolution.
+  assert.notEqual(response.status, "resolved");
+  assert.equal(response.degraded, true);
+  assert.ok(response.warnings?.some((w) => w.startsWith("Content scan failed for a")));
+});
+
 test("resolve detects ambiguity even when input limit is 1", async () => {
   const input = normalizeResolveInput({
     q: "workers ai search",

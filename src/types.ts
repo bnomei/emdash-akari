@@ -85,12 +85,16 @@ export type AkariResolveResponse =
       item: AkariResult;
       alternatives?: AkariResult[];
       warnings?: string[];
+      /** True when one or more requested collections failed to scan. */
+      degraded?: boolean;
     }
   | {
       status: "ambiguous" | "not_found";
       item?: undefined;
       alternatives?: AkariResult[];
       warnings?: string[];
+      /** True when one or more requested collections failed to scan. */
+      degraded?: boolean;
     };
 
 export type AkariCreatePluginOptions = {
