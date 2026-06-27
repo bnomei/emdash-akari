@@ -510,7 +510,7 @@ function sortValue(item: AkariResult, field: string): string | number | undefine
     case "updatedAt":
       return item.updatedAt;
     case "publishedAt":
-      return item.publishedAt;
+      return item.publishedAt ?? undefined;
     case "title":
       return item.identity.title;
     case "collection":

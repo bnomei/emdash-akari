@@ -483,6 +483,36 @@ test("multi-wildcard paths: JS engine evaluates, SQL compiler throws a clear err
   );
 });
 
+test("structural numeric range agrees with the runtime evaluator on mixed JSON types", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("num", JSON.stringify({ price: 99 }));
+  insert.run("str", JSON.stringify({ price: "99" }));
+
+  const compiled = compileStructuralFilter(
+    { path: "$.price", op: "gt", value: 50 },
+    { dataExpression: "e.data" },
+  );
+  const sql = `SELECT e.id FROM entries AS e WHERE ${compiled.where.join(" AND ")} ORDER BY e.id`;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  // Only the numeric price matches; the string "99" must not (SQLite would
+  // otherwise rank TEXT above the numeric literal). Runtime agrees (NaN compare).
+  assert.deepEqual(rows, ["num"]);
+  assert.equal(
+    evaluatePathFilters({ price: "99" }, [{ path: "$.price", op: "gt", value: 50 }]).matched,
+    false,
+  );
+  assert.equal(
+    evaluatePathFilters({ price: 99 }, [{ path: "$.price", op: "gt", value: 50 }]).matched,
+    true,
+  );
+});
+
 test("structural string range agrees with the runtime evaluator across letter case", () => {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");

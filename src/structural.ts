@@ -278,26 +278,34 @@ function compilePathPredicate(
         params: [...typeExpression.params, ...valueExpression.params, filter.value.toLowerCase()],
       };
     case "gt":
-      return {
-        sql: `${valueExpression.sql} > ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate(">", filter.value, valueExpression, typeExpression);
     case "gte":
-      return {
-        sql: `${valueExpression.sql} >= ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate(">=", filter.value, valueExpression, typeExpression);
     case "lt":
-      return {
-        sql: `${valueExpression.sql} < ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate("<", filter.value, valueExpression, typeExpression);
     case "lte":
-      return {
-        sql: `${valueExpression.sql} <= ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate("<=", filter.value, valueExpression, typeExpression);
   }
+}
+
+function compileRangePredicate(
+  operator: ">" | ">=" | "<" | "<=",
+  value: string | number,
+  valueExpression: AkariJsonSqlExpression,
+  typeExpression: AkariJsonSqlExpression,
+): { sql: string; params: AkariScalar[] } {
+  // Runtime `compare` returns NaN (no match) when the stored JSON type does not
+  // match the filter value's type, so guard the SQL comparison by json_type.
+  // Without this, SQLite would rank a TEXT value above any numeric literal
+  // (storage-class ordering), matching a string like "99" against `gt 50`.
+  const typeGuard =
+    typeof value === "number"
+      ? `${typeExpression.sql} IN ('integer', 'real')`
+      : `${typeExpression.sql} = 'text'`;
+  return {
+    sql: `${typeGuard} AND ${valueExpression.sql} ${operator} ?`,
+    params: [...typeExpression.params, ...valueExpression.params, value],
+  };
 }
 
 function tokensToSqlitePath(tokens: AkariPathToken[]): string {
