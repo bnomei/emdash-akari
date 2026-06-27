@@ -26,7 +26,10 @@ export type AkariFtsRow = {
 
 const identifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const whitespaceSplitPattern = /\s+/;
-const ftsOperatorsPattern = /\b(AND|OR|NOT|NEAR)\b/i;
+// FTS5 boolean/proximity operators are case-sensitive (uppercase only). No `/i`
+// flag, so ordinary lowercase words like "and"/"or"/"not"/"near" stay plain
+// terms and keep prefix-term normalization instead of being treated as operators.
+const ftsOperatorsPattern = /\b(AND|OR|NOT|NEAR)\b/;
 const doubleQuotePattern = /"/g;
 
 export function getEmDashFtsTableName(collection: string): string {

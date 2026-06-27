@@ -202,6 +202,10 @@ test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
   assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');
   assert.equal(escapeFts5Query("workers OR d1"), "workers OR d1");
+  // Lowercase operator words are ordinary terms: keep prefix-term normalization
+  // instead of routing them through the raw-operator branch.
+  assert.equal(escapeFts5Query("salt and pepper"), '"salt"* "and"* "pepper"*');
+  assert.equal(escapeFts5Query("not done"), '"not"* "done"*');
   assert.equal(escapeFts5Query('workers "ai"'), '"workers"* """ai"""*');
   assert.equal(escapeFts5Query("   "), "");
   assert.equal(
