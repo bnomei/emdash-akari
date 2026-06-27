@@ -115,7 +115,16 @@ export function mapFtsRows(collection: string, rows: AkariFtsRow[]): AkariResult
 
 function buildBm25Weights(fields: string[], weights: Record<string, number> | undefined): number[] {
   if (!weights || fields.length === 0) return [];
-  return [0, 0, ...fields.map((field) => weights[field] ?? 1)];
+  return [
+    0,
+    0,
+    ...fields.map((field) => {
+      const weight = weights[field] ?? 1;
+      if (typeof weight !== "number" || !Number.isFinite(weight))
+        throw new Error(`Invalid BM25 weight for field ${field}: ${String(weight)}`);
+      return weight;
+    }),
+  ];
 }
 
 function buildFallbackUrl(identity: Pick<AkariIdentity, "collection" | "id" | "slug">): string {
