@@ -570,6 +570,23 @@ test("content fallback executes private structural discovery without D1", async 
   ]);
 });
 
+test("structural mode applies q as a filter and ranking signal", async () => {
+  // A query that matches nothing must return no items, not the whole collection.
+  const noMatch = await runAkariQuery(
+    normalizeQueryInput({ q: "zzzznonexistent", mode: "structural", collections: ["pages"] }),
+    { content },
+  );
+  assert.equal(noMatch.items.length, 0);
+
+  // A query that matches only one entry narrows the structural result set.
+  const narrowed = await runAkariQuery(
+    normalizeQueryInput({ q: "workers", mode: "structural", collections: ["pages"] }),
+    { content },
+  );
+  assert.equal(narrowed.items.length, 1);
+  assert.equal(narrowed.items[0].identity.id, "home");
+});
+
 test("content scan enforces fetchLimit even when a provider over-returns a page", async () => {
   const items = Array.from({ length: 10 }, (_, index) => ({
     id: `item-${index}`,

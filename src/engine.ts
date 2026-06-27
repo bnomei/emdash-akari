@@ -342,9 +342,13 @@ function evaluateContentItem(
   if (!pathResult.matched) return null;
 
   const textScore = input.q ? scoreText(input.q, item) : { score: 1 };
-  if (input.q && textScore.score <= 0 && input.mode !== "structural") return null;
+  // When a query is supplied it must constrain and rank results in every mode,
+  // not just lexical: a structural query carrying a text term should narrow to
+  // entries that match it (previously structural mode kept the whole filter set
+  // with tied scores). With no query, every filter-matched item scores 1.
+  if (input.q && textScore.score <= 0) return null;
 
-  const score = input.mode === "structural" ? 1 : textScore.score;
+  const score = input.q ? textScore.score : 1;
 
   return {
     source: "content",
