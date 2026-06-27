@@ -852,6 +852,39 @@ test("ambiguous resolve honors maxAlternatives below two", async () => {
   assert.equal(one.alternatives.length, 1);
 });
 
+test("rank fusion does not let a null content field erase an FTS identity value", () => {
+  const fused = reciprocalRankFusion([
+    [
+      {
+        key: "pages:home:en",
+        source: "fts",
+        result: {
+          identity: {
+            collection: "pages",
+            id: "home",
+            locale: "en",
+            slug: "workers-ai",
+            title: "Workers AI",
+          },
+        },
+      },
+    ],
+    [
+      {
+        key: "pages:home:en",
+        source: "content",
+        result: {
+          // Content record is missing the slug; it must not clobber the FTS slug.
+          identity: { collection: "pages", id: "home", locale: "en", slug: null, title: "Workers AI" },
+        },
+      },
+    ],
+  ]);
+
+  assert.equal(fused[0].identity.slug, "workers-ai");
+  assert.equal(fused[0].identity.title, "Workers AI");
+});
+
 test("rank fusion boosts overlap deterministically", () => {
   const fused = reciprocalRankFusion([
     [

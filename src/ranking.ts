@@ -1,4 +1,4 @@
-import type { AkariResult } from "./types";
+import type { AkariIdentity, AkariResult } from "./types";
 
 export type AkariRankedCandidate = {
   key: string;
@@ -66,13 +66,31 @@ export function reciprocalRankFusion(
 
 function mergeResult(left: AkariResult, right: AkariResult): AkariResult {
   return {
-    identity: { ...left.identity, ...right.identity },
+    identity: mergeIdentity(left.identity, right.identity),
     score: Math.max(left.score ?? 0, right.score ?? 0),
     snippet: left.snippet ?? right.snippet,
     matchedFields: mergeUnique(left.matchedFields, right.matchedFields),
     matchedPaths: mergeUnique(left.matchedPaths, right.matchedPaths),
     updatedAt: left.updatedAt ?? right.updatedAt,
     publishedAt: left.publishedAt ?? right.publishedAt,
+  };
+}
+
+/**
+ * Merge identity fields without letting a later layer's null/undefined value
+ * erase a defined value from an earlier layer. Defined `right` fields (content,
+ * the authoritative record) win; otherwise `left` (e.g. FTS) is kept. Prevents
+ * a null content slug/title from clobbering values the lexical layer supplied.
+ */
+function mergeIdentity(left: AkariIdentity, right: AkariIdentity): AkariIdentity {
+  return {
+    collection: right.collection ?? left.collection,
+    id: right.id ?? left.id,
+    slug: right.slug ?? left.slug,
+    locale: right.locale ?? left.locale,
+    status: right.status ?? left.status,
+    title: right.title ?? left.title,
+    url: right.url ?? left.url,
   };
 }
 
