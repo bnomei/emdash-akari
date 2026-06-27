@@ -6,7 +6,6 @@ import { reciprocalRankFusion, resultKey, type AkariRankedCandidate } from "./ra
 import type {
   AkariFacet,
   AkariFacetResult,
-  AkariFilter,
   AkariQueryResponse,
   AkariResolveResponse,
   AkariResult,
@@ -52,7 +51,7 @@ export async function runAkariQuery(
 
   if (usesLexical(input)) {
     try {
-      const lexical = await runLexicalSearch(input, collections, lexicalSearch);
+      const lexical = await runLexicalSearch(input, collections, lexicalSearch, options.content);
       groups.push(toRankedGroup(lexical, "fts"));
     } catch (error) {
       warnings.push(`FTS search unavailable: ${getErrorMessage(error)}.`);
@@ -149,6 +148,7 @@ async function runLexicalSearch(
   input: AkariValidatedQueryInput,
   collections: string[],
   searchProvider: AkariLexicalSearchProvider,
+  content: ContentAccess | undefined,
 ): Promise<EngineCandidate[]> {
   if (!input.q) return [];
 
@@ -160,11 +160,11 @@ async function runLexicalSearch(
     cursor: input.after ?? undefined,
   });
 
-  return response.items
-    .filter((item) =>
-      matchesMetadataFilters(searchResultMetadata(item, input.filter), input.filter),
-    )
-    .map((item) => ({
+  const out: EngineCandidate[] = [];
+  for (const item of response.items) {
+    const metadata = await resolveLexicalMetadata(item, content);
+    if (!matchesMetadataFilters(metadata, input.filter)) continue;
+    out.push({
       source: "fts",
       score: item.score,
       result: {
@@ -181,7 +181,33 @@ async function runLexicalSearch(
         matchedFields: ["fts"],
         matchedPaths: [],
       },
-    }));
+    });
+  }
+
+  return out;
+}
+
+async function resolveLexicalMetadata(
+  item: SearchResponse["items"][number],
+  content: ContentAccess | undefined,
+): Promise<Record<string, unknown>> {
+  if (content) {
+    try {
+      const full = await content.get(item.collection, item.id);
+      if (full) return buildContentMetadata(item.collection, full);
+    } catch {
+      // Fall back to hit-only metadata when the entry cannot be fetched.
+    }
+  }
+
+  return {
+    collection: item.collection,
+    id: item.id,
+    entry_id: item.id,
+    slug: item.slug,
+    locale: item.locale,
+    title: item.title,
+  };
 }
 
 async function scanContent(
@@ -249,18 +275,7 @@ function evaluateContentItem(
       options.url?.(buildFallbackUrl(collection, item.slug ?? item.id)) ??
       buildFallbackUrl(collection, item.slug ?? item.id),
   };
-  const metadata = {
-    ...item.data,
-    collection,
-    id: item.id,
-    entry_id: item.id,
-    slug: item.slug,
-    locale: item.locale,
-    status: item.status,
-    updatedAt: item.updatedAt,
-    publishedAt: item.publishedAt,
-    seo: item.seo,
-  };
+  const metadata = buildContentMetadata(collection, item);
 
   if (!matchesMetadataFilters(metadata, input.filter)) return null;
 
@@ -399,18 +414,21 @@ function resolveCollections(
   return input.collections ?? fromFilter ?? defaults ?? [];
 }
 
-function searchResultMetadata(
-  item: SearchResponse["items"][number],
-  filter: AkariFilter | undefined,
+function buildContentMetadata(
+  collection: string,
+  item: AkariContentItem,
 ): Record<string, unknown> {
   return {
-    collection: item.collection,
+    ...item.data,
+    collection,
     id: item.id,
     entry_id: item.id,
     slug: item.slug,
     locale: item.locale,
-    status: getStringEqualityFilter(filter, "status"),
-    title: item.title,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    publishedAt: item.publishedAt,
+    seo: item.seo,
   };
 }
 

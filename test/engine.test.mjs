@@ -398,6 +398,52 @@ test("lexical provider and content scan fuse overlapping candidates", async () =
   assert.equal(response.items.length, 2);
 });
 
+test("lexical post-filter drops hits whose real metadata fails the filter", async () => {
+  // Provider leaks a draft hit (ignores the requested status). The post-filter
+  // must resolve the hit's real status via content.get and drop it, instead of
+  // trusting a status fabricated from the filter constraint.
+  const input = normalizeQueryInput({
+    q: "about",
+    mode: "lexical",
+    collections: ["pages"],
+    filter: { status: "published" },
+    limit: 5,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "about", slug: "about", locale: "en", title: "About", score: 7 },
+    ],
+  });
+
+  const response = await runAkariQuery(input, { content, lexicalSearch });
+
+  assert.equal(response.items.length, 0);
+});
+
+test("lexical post-filter honors non-equality status filters via real metadata", async () => {
+  // $in is not a plain equality, so status cannot be fabricated from the filter.
+  // The draft hit must be resolved and kept because its real status is in the set.
+  const input = normalizeQueryInput({
+    q: "zzzznomatch",
+    mode: "lexical",
+    collections: ["pages"],
+    filter: { status: { $in: ["published", "draft"] } },
+    limit: 5,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "about", slug: "about", locale: "en", title: "About", score: 7 },
+    ],
+  });
+
+  const response = await runAkariQuery(input, { content, lexicalSearch });
+
+  assert.equal(response.items.length, 1);
+  assert.equal(response.items[0].identity.id, "about");
+});
+
 test("resolve returns ambiguity when top fused candidates are too close", async () => {
   const input = normalizeResolveInput({
     q: "workers ai search",
