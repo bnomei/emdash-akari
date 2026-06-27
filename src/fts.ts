@@ -107,10 +107,29 @@ export function mapFtsRows(collection: string, rows: AkariFtsRow[]): AkariResult
       url: buildFallbackUrl({ collection, id: row.id, slug: row.slug }),
     },
     score: Math.abs(row.score),
-    snippet: row.snippet ?? undefined,
+    snippet: row.snippet != null ? escapeFtsSnippet(row.snippet) : undefined,
     matchedFields: ["fts"],
     matchedPaths: [],
   }));
+}
+
+/**
+ * SQLite `snippet()` wraps raw indexed document text in `<mark>`/`</mark>`
+ * markers without escaping the surrounding text. Escape all HTML metacharacters
+ * and then restore the literal highlight markers, so the only markup that
+ * survives is the intended `<mark>` wrapper (mirrors the content-scan snippet
+ * path, which escapes before adding marks). Prevents stored XSS when callers
+ * render snippets as HTML.
+ */
+function escapeFtsSnippet(snippet: string): string {
+  return snippet
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replaceAll("&lt;mark&gt;", "<mark>")
+    .replaceAll("&lt;/mark&gt;", "</mark>");
 }
 
 function buildBm25Weights(fields: string[], weights: Record<string, number> | undefined): number[] {
