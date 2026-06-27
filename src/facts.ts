@@ -97,6 +97,25 @@ export function extractContentFacts(options: ExtractFactsOptions): AkariContentF
   return facts;
 }
 
+/**
+ * Extract facts for an entry and build the replacement statements in one step,
+ * always deriving the replacement scope from the extraction options. Unlike
+ * calling `buildReplaceFactsStatements(extractContentFacts(options))` directly,
+ * this still emits a clearing DELETE when extraction yields zero facts (e.g. the
+ * content changed so no configured path matches anymore), so stale sidecar rows
+ * for that entry never linger.
+ */
+export function buildReplaceFactsStatementsFromExtraction(
+  options: ExtractFactsOptions,
+): AkariFactSqlStatement[] {
+  const facts = extractContentFacts(options);
+  return buildReplaceFactsStatements(facts, {
+    collection: options.collection,
+    entryId: options.entryId,
+    locale: options.locale,
+  });
+}
+
 export function buildReplaceFactsStatements(
   facts: AkariContentFact[],
   target?: AkariFactsReplacementTarget,

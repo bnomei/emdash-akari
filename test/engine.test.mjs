@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AKARI_FACTS_TABLE_SQL,
   buildReplaceFactsStatements,
+  buildReplaceFactsStatementsFromExtraction,
   compileStructuralFilter,
   compileStructuralFilters,
   evaluatePathFilters,
@@ -285,6 +286,27 @@ test("facts replacement deletes every scope in a mixed-entry batch", () => {
   );
   // Every fact is still inserted.
   assert.equal(inserts.length, homeFacts.length + aboutFacts.length);
+});
+
+test("facts replacement from extraction clears stale rows when nothing matches", () => {
+  // Content no longer has any block matching the configured template, so
+  // extraction yields zero facts. The from-extraction helper must still emit a
+  // scoped DELETE so the entry's old sidecar rows are cleared.
+  const statements = buildReplaceFactsStatementsFromExtraction({
+    collection: "pages",
+    entryId: "home",
+    locale: "en",
+    status: "published",
+    data: { title: "No blocks here" },
+    pathTemplates: ["$.blocks[*].type"],
+  });
+
+  assert.equal(statements.length, 1);
+  assert.equal(statements[0].sql.startsWith("DELETE"), true);
+  assert.deepEqual(statements[0].params, ["pages", "home", "en"]);
+
+  // For comparison, the low-level call without a target is a no-op (scope unknown).
+  assert.deepEqual(buildReplaceFactsStatements([]), []);
 });
 
 test("facts replacement only deletes the path templates in the batch", () => {

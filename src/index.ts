@@ -55,12 +55,14 @@ export {
   AKARI_FACTS_INDEX_SQL,
   AKARI_FACTS_TABLE_SQL,
   buildReplaceFactsStatements,
+  buildReplaceFactsStatementsFromExtraction,
   extractContentFacts,
   getFactValueType,
   type AkariContentFact,
   type AkariFactSqlStatement,
   type AkariFactValueType,
   type AkariFactsReplacementTarget,
+  type ExtractFactsOptions,
 } from "./facts";
 export {
   buildEmDashFts5Plan,

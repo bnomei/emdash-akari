@@ -366,6 +366,7 @@ import {
   AKARI_FACTS_INDEX_SQL,
   AKARI_FACTS_TABLE_SQL,
   buildReplaceFactsStatements,
+  buildReplaceFactsStatementsFromExtraction,
   extractContentFacts,
 } from "@bnomei/emdash-akari";
 ```
@@ -374,6 +375,14 @@ Those helpers materialize configured structural paths into
 `_emdash_content_facts`. The table keeps both `path_template` values such as
 `$.blocks[*].type` for grouping and concrete `full_path` values such as
 `$.blocks[3].type` for evidence.
+
+Prefer `buildReplaceFactsStatementsFromExtraction(options)` when re-indexing an
+entry: it extracts facts and derives the replacement scope from the same
+options, so it still emits a clearing DELETE when extraction returns zero facts
+(for example after content changes so no configured path matches). Calling
+`buildReplaceFactsStatements(facts)` with an empty `facts` array and no `target`
+is a no-op, because the entry scope cannot be derived from zero rows — pass a
+`target` (or use the from-extraction helper) to clear stale rows.
 
 ## Response Shapes
 
