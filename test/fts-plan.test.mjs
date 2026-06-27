@@ -227,7 +227,7 @@ test("FTS query escaping documents lexical filter semantics", () => {
   );
 });
 
-test("FTS plan defaults missing status to published, matching EmDash search", () => {
+test("FTS plan omits the status predicate when status is absent", () => {
   const plan = buildEmDashFts5Plan({
     collection: "pages",
     query: "workers",
@@ -235,9 +235,8 @@ test("FTS plan defaults missing status to published, matching EmDash search", ()
   });
 
   assert.ok(plan);
-  // The status clause is always present and defaults to published.
-  assert.match(plan.sql, /AND c\.status = \?/);
-  assert.ok(plan.params.includes("published"));
+  assert.doesNotMatch(plan.sql, /AND c\.status = \?/);
+  assert.ok(!plan.params.includes("published"));
 
   // An explicit status is honored.
   const draftPlan = buildEmDashFts5Plan({
@@ -247,6 +246,7 @@ test("FTS plan defaults missing status to published, matching EmDash search", ()
     status: "draft",
   });
   assert.ok(draftPlan);
+  assert.match(draftPlan.sql, /AND c\.status = \?/);
   assert.ok(draftPlan.params.includes("draft"));
   assert.ok(!draftPlan.params.includes("published"));
 });

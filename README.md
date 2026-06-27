@@ -275,11 +275,10 @@ same EmDash full-text table convention and uses SQLite
 [FTS5](https://sqlite.org/fts5.html) ranking/snippets so `discover` can return
 an identity-shaped answer instead of only a public search hit.
 
-The exported `buildEmDashFts5Plan` helper defaults a missing `status` to
-`"published"`, matching EmDash's own `search()` (which also constrains
-`c.status = 'published'` when no status is given). To query another status, pass
-it explicitly; there is no "all statuses" shortcut, by design, so the planner
-stays consistent with EmDash's canonical FTS behavior.
+The exported `buildEmDashFts5Plan` helper omits the status predicate when
+`status` is not provided, so diagnostics and admin tooling can inspect every
+stored status. Pass `status: "published"` or another explicit status when the
+plan should constrain rows.
 
 Lexical queries are normalized before they reach FTS5:
 

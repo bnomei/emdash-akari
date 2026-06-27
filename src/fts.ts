@@ -68,11 +68,8 @@ export function escapeFts5Query(query: string): string {
 }
 
 /**
- * Build an EmDash-compatible FTS5 SQL plan. When `status` is omitted it defaults
- * to `"published"`, matching EmDash's own `search()` (which also binds
- * `c.status = 'published'` for an absent status); pass an explicit `status` to
- * query a different status. There is no "all statuses" shortcut, by design, so
- * this helper stays consistent with EmDash's canonical FTS behavior.
+ * Build an EmDash-compatible FTS5 SQL plan. When `status` is omitted, the plan
+ * does not add a status predicate; pass an explicit status to constrain rows.
  */
 export function buildEmDashFts5Plan(input: AkariFtsPlanInput): AkariSqlPlan | null {
   const ftsQuery = escapeFts5Query(input.query);
@@ -83,12 +80,13 @@ export function buildEmDashFts5Plan(input: AkariFtsPlanInput): AkariSqlPlan | nu
 
   const ftsTable = getEmDashFtsTableName(input.collection);
   const contentTable = getEmDashContentTableName(input.collection);
-  const status = input.status ?? "published";
   const limit = input.limit ?? 20;
   const weights = buildBm25Weights(input.searchableFields, input.weights);
   const bm25 =
     weights.length > 0 ? `bm25("${ftsTable}", ${weights.join(", ")})` : `bm25("${ftsTable}")`;
-  const params: Array<number | string> = [ftsQuery, status];
+  const params: Array<number | string> = [ftsQuery];
+  const statusClause = input.status !== undefined ? "AND c.status = ?" : "";
+  if (input.status !== undefined) params.push(input.status);
   const localeClause = input.locale ? "AND c.locale = ?" : "";
   if (input.locale) params.push(input.locale);
   params.push(limit);
@@ -105,7 +103,7 @@ SELECT
 FROM "${ftsTable}" f
 JOIN "${contentTable}" c ON f.id = c.id AND f.locale IS c.locale
 WHERE "${ftsTable}" MATCH ?
-  AND c.status = ?
+  ${statusClause}
   AND c.deleted_at IS NULL
   ${localeClause}
 ORDER BY score
