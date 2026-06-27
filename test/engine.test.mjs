@@ -628,6 +628,44 @@ test("top-level collections override a conflicting filter.collection with a warn
   assert.ok(response.warnings?.some((w) => w.includes("filter.collection was ignored")));
 });
 
+test("path facets do not borrow filter matchedPaths as bucket values", async () => {
+  // The entry matches the type filter (so matchedPaths is non-empty) but has no
+  // url at the facet path. The url facet must stay empty, not echo evidence
+  // pointers like "$.blocks[0].type" as bucket values.
+  const posts = [
+    {
+      id: "p1",
+      type: "posts",
+      slug: "p1",
+      status: "published",
+      locale: "en",
+      data: { title: "P1", blocks: [{ type: "embed" }] },
+    },
+  ];
+  const postContent = {
+    async get(_collection, id) {
+      return posts.find((item) => item.id === id) ?? null;
+    },
+    async list() {
+      return { items: posts, hasMore: false };
+    },
+  };
+
+  const response = await runAkariQuery(
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["posts"],
+      paths: [{ path: "$.blocks[*].type", op: "eq", value: "embed" }],
+      facets: ["$.blocks[*].url"],
+      limit: 10,
+    }),
+    { content: postContent },
+  );
+
+  const urlFacet = response.facets?.find((facet) => facet.key === "$.blocks[*].url");
+  assert.deepEqual(urlFacet?.buckets, []);
+});
+
 test("facets count non-identity data fields like category", async () => {
   const articles = [
     { id: "a1", type: "articles", slug: "a1", status: "published", locale: "en", data: { title: "A1", category: "news" } },

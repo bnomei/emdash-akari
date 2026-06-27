@@ -387,7 +387,7 @@ function evaluateContentItem(
       updatedAt: item.updatedAt,
       publishedAt: item.publishedAt,
     },
-    facetValues: buildFacetValues(input.facets, item, collection, pathResult.matchedPaths),
+    facetValues: buildFacetValues(input.facets, item, collection),
   };
 }
 
@@ -559,7 +559,6 @@ function buildFacetValues(
   facets: AkariFacet[] | undefined,
   item: AkariContentItem,
   collection: string,
-  matchedPaths: string[],
 ): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   if (!facets) return out;
@@ -571,10 +570,12 @@ function buildFacetValues(
     else if (key === "status") out[key] = [item.status];
     else if (key === "locale" && item.locale) out[key] = [item.locale];
     else if (key.startsWith("$")) {
+      // Facet buckets must contain values read at the facet path (e.g. "embed"),
+      // not path-filter evidence pointers. If the read yields no stringifiable
+      // values, this item simply contributes nothing to the facet.
       out[key] = readAkariJsonPathValues(item.data, key)
         .map((value) => stringifyFacetValue(value.value))
         .filter((value): value is string => typeof value === "string");
-      if (out[key].length === 0 && matchedPaths.length > 0) out[key] = matchedPaths;
     } else {
       // Facet on any other metadata/data field (e.g. "category", "author",
       // "seo.title"): read it from the entry metadata so non-identity fields
