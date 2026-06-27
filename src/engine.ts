@@ -96,7 +96,12 @@ export async function resolveAkariQuery(
   input: AkariValidatedResolveInput,
   options: AkariEngineOptions = {},
 ): Promise<AkariResolveResponse> {
-  const response = await runAkariQuery(input, options);
+  const maxAlternatives = input.maxAlternatives ?? 3;
+  // Resolve decides ambiguity from the true top-two fused candidates and may
+  // return up to maxAlternatives alternatives, so it must not let a small
+  // client limit (e.g. limit: 1) truncate the fused pool before that decision.
+  const resolveLimit = Math.max(input.limit, maxAlternatives + 1, 2);
+  const response = await runAkariQuery({ ...input, limit: resolveLimit }, options);
   const [first, second] = response.items;
 
   if (!first) {
@@ -110,7 +115,6 @@ export async function resolveAkariQuery(
   const margin = options.ambiguityMargin ?? defaultAmbiguityMargin;
   const firstScore = first.score ?? 0;
   const secondScore = second?.score ?? 0;
-  const maxAlternatives = input.maxAlternatives ?? 3;
 
   if (second && firstScore - secondScore <= margin) {
     return {

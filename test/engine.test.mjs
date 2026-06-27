@@ -532,6 +532,31 @@ test("resolve returns ambiguity when top fused candidates are too close", async 
   assert.equal(response.alternatives?.length, 2);
 });
 
+test("resolve detects ambiguity even when input limit is 1", async () => {
+  const input = normalizeResolveInput({
+    q: "workers ai search",
+    mode: "lexical",
+    collections: ["pages"],
+    limit: 1,
+    maxAlternatives: 2,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "home", slug: "home", locale: "en", title: "Home", score: 10 },
+      { collection: "pages", id: "about", slug: "about", locale: "en", title: "About", score: 9 },
+    ],
+  });
+
+  const response = await resolveAkariQuery(input, {
+    lexicalSearch,
+    ambiguityMargin: 1,
+  });
+
+  assert.equal(response.status, "ambiguous");
+  assert.equal(response.alternatives?.length, 2);
+});
+
 test("rank fusion boosts overlap deterministically", () => {
   const fused = reciprocalRankFusion([
     [
