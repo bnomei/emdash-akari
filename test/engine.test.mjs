@@ -250,6 +250,42 @@ test("facts replacement statements can rebuild a sidecar fact slice", () => {
   );
 });
 
+test("facts replacement deletes every scope in a mixed-entry batch", () => {
+  const homeFacts = extractContentFacts({
+    collection: "pages",
+    entryId: "home",
+    locale: "en",
+    status: "published",
+    data: fixtures.pages[0].data,
+    pathTemplates: ["$.blocks[*].type"],
+  });
+  const aboutFacts = extractContentFacts({
+    collection: "pages",
+    entryId: "about",
+    locale: "en",
+    status: "draft",
+    data: fixtures.pages[1].data,
+    pathTemplates: ["$.blocks[*].type"],
+  });
+
+  const statements = buildReplaceFactsStatements([...homeFacts, ...aboutFacts]);
+
+  const deletes = statements.filter((s) => s.sql.startsWith("DELETE"));
+  const inserts = statements.filter((s) => s.sql.startsWith("INSERT"));
+
+  // One DELETE per distinct (collection, entry_id, locale) scope, not just the first.
+  assert.equal(deletes.length, 2);
+  assert.deepEqual(
+    deletes.map((s) => s.params),
+    [
+      ["pages", "home", "en"],
+      ["pages", "about", "en"],
+    ],
+  );
+  // Every fact is still inserted.
+  assert.equal(inserts.length, homeFacts.length + aboutFacts.length);
+});
+
 test("structural SQL compiler runs direct and wildcard path filters in SQLite", () => {
   const direct = compileStructuralFilter(
     { path: "$.title", op: "match", value: "workers" },

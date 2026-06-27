@@ -101,14 +101,19 @@ export function buildReplaceFactsStatements(
   facts: AkariContentFact[],
   target?: AkariFactsReplacementTarget,
 ): AkariFactSqlStatement[] {
-  const scope = facts[0] ?? target;
-  if (!scope) return [];
+  // Replace must delete every scope it is about to rewrite. A batch may mix
+  // multiple (collection, entry_id, locale) tuples, so emit one DELETE per
+  // distinct scope instead of only the first entry's. When no facts are given,
+  // fall back to the explicit target (clears a single entry's sidecar).
+  const scopes =
+    facts.length > 0 ? collectFactScopes(facts) : target ? [target] : [];
+  if (scopes.length === 0) return [];
 
   return [
-    {
+    ...scopes.map((scope) => ({
       sql: "DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '')",
-      params: [scope.collection, scope.entryId, scope.locale],
-    },
+      params: [scope.collection, scope.entryId, scope.locale ?? null],
+    })),
     ...facts.map((fact) => ({
       sql: `INSERT INTO _emdash_content_facts (
   collection,
@@ -142,6 +147,23 @@ export function buildReplaceFactsStatements(
       ],
     })),
   ];
+}
+
+function collectFactScopes(facts: AkariContentFact[]): AkariFactsReplacementTarget[] {
+  const scopes = new Map<string, AkariFactsReplacementTarget>();
+
+  for (const fact of facts) {
+    const key = `${fact.collection}\u0000${fact.entryId}\u0000${fact.locale ?? ""}`;
+    if (!scopes.has(key)) {
+      scopes.set(key, {
+        collection: fact.collection,
+        entryId: fact.entryId,
+        locale: fact.locale,
+      });
+    }
+  }
+
+  return [...scopes.values()];
 }
 
 export function getFactValueType(value: unknown): AkariFactValueType {
