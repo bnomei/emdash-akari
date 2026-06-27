@@ -609,6 +609,25 @@ test("content fallback executes private structural discovery without D1", async 
   ]);
 });
 
+test("top-level collections override a conflicting filter.collection with a warning", async () => {
+  const response = await runAkariQuery(
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["pages"],
+      filter: { collection: "products", status: "published" },
+      limit: 10,
+    }),
+    { content },
+  );
+
+  // filter.collection ("products") would otherwise reject every scanned "pages"
+  // row; instead collections wins, the published page is returned, and a warning
+  // explains the ignored selector.
+  assert.ok(response.items.length >= 1);
+  assert.ok(response.items.every((item) => item.identity.collection === "pages"));
+  assert.ok(response.warnings?.some((w) => w.includes("filter.collection was ignored")));
+});
+
 test("facets count non-identity data fields like category", async () => {
   const articles = [
     { id: "a1", type: "articles", slug: "a1", status: "published", locale: "en", data: { title: "A1", category: "news" } },

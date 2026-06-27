@@ -54,13 +54,23 @@ export async function runAkariQuery(
   const facetsByResult = new Map<string, Record<string, string[]>>();
   const collections = resolveCollections(input, options.defaultCollections);
   const lexicalSearch = options.lexicalSearch ?? emdashSearch;
+  // Top-level `collections` is the authoritative scope selector; `filter.collection`
+  // is only a fallback when `collections` is omitted (README). When both are set,
+  // drop `filter.collection` so it cannot post-filter every scanned row out, and
+  // warn so a conflicting selector does not silently produce empty results.
+  const queryInput = stripRedundantCollectionFilter(input, warnings);
 
   let lexicalNextCursor: string | undefined;
   let ranContentScan = false;
 
-  if (usesLexical(input)) {
+  if (usesLexical(queryInput)) {
     try {
-      const lexical = await runLexicalSearch(input, collections, lexicalSearch, options.content);
+      const lexical = await runLexicalSearch(
+        queryInput,
+        collections,
+        lexicalSearch,
+        options.content,
+      );
       groups.push(toRankedGroup(lexical.candidates, "fts"));
       lexicalNextCursor = lexical.nextCursor;
     } catch (error) {
@@ -68,9 +78,9 @@ export async function runAkariQuery(
     }
   }
 
-  if (shouldRunContentScan(input, options, collections)) {
+  if (shouldRunContentScan(queryInput, options, collections)) {
     ranContentScan = true;
-    const scanned = await scanContent(input, collections, options, warnings);
+    const scanned = await scanContent(queryInput, collections, options, warnings);
     groups.push(toRankedGroup(scanned, "content"));
 
     for (const candidate of scanned) {
@@ -597,6 +607,19 @@ function resolveCollections(
 ): string[] {
   const fromFilter = getStringSetFilter(input.filter, "collection");
   return input.collections ?? fromFilter ?? defaults ?? [];
+}
+
+function stripRedundantCollectionFilter<T extends AkariValidatedQueryInput>(
+  input: T,
+  warnings: string[],
+): T {
+  if (!input.collections || !input.filter || !("collection" in input.filter)) return input;
+
+  const { collection: _collection, ...rest } = input.filter;
+  warnings.push(
+    "filter.collection was ignored because top-level collections was provided; collections is the authoritative scope.",
+  );
+  return { ...input, filter: Object.keys(rest).length > 0 ? rest : undefined };
 }
 
 function buildContentMetadata(
