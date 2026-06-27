@@ -72,7 +72,10 @@ export type ExtractFactsOptions = {
 export function extractContentFacts(options: ExtractFactsOptions): AkariContentFact[] {
   const facts: AkariContentFact[] = [];
 
-  for (const pathTemplate of options.pathTemplates) {
+  // Dedupe templates: a duplicated path template would otherwise produce facts
+  // with identical (collection, entry_id, locale, path_template, full_path)
+  // primary keys, colliding on insert.
+  for (const pathTemplate of [...new Set(options.pathTemplates)]) {
     const values = readAkariJsonPathValues(options.data, pathTemplate);
 
     for (const item of values) {
@@ -147,7 +150,9 @@ export function buildReplaceFactsStatements(
       params: [scope.collection, scope.entryId, scope.locale ?? null, ...scope.pathTemplates],
     })),
     ...facts.map((fact) => ({
-      sql: `INSERT INTO _emdash_content_facts (
+      // INSERT OR REPLACE keeps the replace idempotent even if the caller passes
+      // facts that collide on the primary key (e.g. from a duplicated template).
+      sql: `INSERT OR REPLACE INTO _emdash_content_facts (
   collection,
   entry_id,
   locale,

@@ -309,6 +309,45 @@ test("facts replacement from extraction clears stale rows when nothing matches",
   assert.deepEqual(buildReplaceFactsStatements([]), []);
 });
 
+test("facts replace is idempotent for duplicate templates / colliding facts", () => {
+  // extractContentFacts dedupes a repeated template so it never emits two facts
+  // with the same primary key.
+  const facts = extractContentFacts({
+    collection: "c",
+    entryId: "e",
+    data: { a: 1 },
+    pathTemplates: ["$.a", "$.a"],
+  });
+  assert.equal(facts.length, 1);
+
+  // Even if a caller passes colliding facts directly, INSERT OR REPLACE keeps
+  // the replace from aborting after the DELETE has already cleared the entry.
+  // A non-null locale makes the PK tuple collide (SQLite treats NULLs as
+  // distinct in a unique index, so the collision needs a concrete locale).
+  const fact = {
+    collection: "c",
+    entryId: "e",
+    locale: "en",
+    status: "published",
+    pathTemplate: "$.a",
+    fullPath: "$.a",
+    valueType: "number",
+    valueNumber: 1,
+    valueJson: "1",
+  };
+  const statements = buildReplaceFactsStatements([fact, { ...fact }]);
+
+  const db = new DatabaseSync(":memory:");
+  db.exec(AKARI_FACTS_TABLE_SQL);
+  const bind = (value) =>
+    value === undefined ? null : typeof value === "boolean" ? (value ? 1 : 0) : value;
+
+  assert.doesNotThrow(() => {
+    for (const statement of statements) db.prepare(statement.sql).run(...statement.params.map(bind));
+  });
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM _emdash_content_facts").get().n, 1);
+});
+
 test("facts replacement only deletes the path templates in the batch", () => {
   const facts = extractContentFacts({
     collection: "pages",
