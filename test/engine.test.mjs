@@ -336,6 +336,39 @@ test("structural SQL compiler runs direct and wildcard path filters in SQLite", 
   assert.deepEqual(rows, [{ id: "home" }]);
 });
 
+test("structural ne agrees with the runtime evaluator on non-scalar values", () => {
+  const compiled = compileStructuralFilter(
+    { path: "$.meta", op: "ne", value: "draft" },
+    { dataExpression: "e.data" },
+  );
+
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE entries (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO entries (id, data) VALUES (?, ?)");
+  insert.run("object", JSON.stringify({ meta: { id: 1 } }));
+  insert.run("scalar", JSON.stringify({ meta: "active" }));
+  insert.run("equal", JSON.stringify({ meta: "draft" }));
+
+  const sql = `SELECT e.id FROM entries AS e WHERE ${compiled.where.join(" AND ")} ORDER BY e.id`;
+  const rows = db
+    .prepare(sql)
+    .all(...compiled.params)
+    .map((row) => row.id);
+
+  // Compiled SQL excludes the non-scalar object (and the equal value), matching runtime.
+  assert.deepEqual(rows, ["scalar"]);
+
+  // Runtime evaluator: object value is rejected by ne, scalar differing value matches.
+  assert.equal(
+    evaluatePathFilters({ meta: { id: 1 } }, [{ path: "$.meta", op: "ne", value: "draft" }]).matched,
+    false,
+  );
+  assert.equal(
+    evaluatePathFilters({ meta: "active" }, [{ path: "$.meta", op: "ne", value: "draft" }]).matched,
+    true,
+  );
+});
+
 test("content fallback executes private structural discovery without D1", async () => {
   const input = normalizeQueryInput({
     mode: "structural",

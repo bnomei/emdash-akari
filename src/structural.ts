@@ -211,9 +211,12 @@ function compilePathPredicate(
           params: [...typeExpression.params, ...typeExpression.params],
         };
       }
+      // Runtime `ne` (paths.ts) requires a scalar value, so exclude object/array
+      // JSON here too; otherwise SQL `!=` would match structured values the
+      // in-engine evaluator rejects, diverging the two execution paths.
       return {
-        sql: `${valueExpression.sql} != ?`,
-        params: [...valueExpression.params, filter.value],
+        sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} != ?`,
+        params: [...typeExpression.params, ...valueExpression.params, filter.value],
       };
     case "in":
       return {
@@ -221,9 +224,10 @@ function compilePathPredicate(
         params: [...valueExpression.params, ...filter.value],
       };
     case "nin":
+      // Mirror runtime `nin`, which also requires a scalar value.
       return {
-        sql: `${valueExpression.sql} NOT IN (${placeholders(filter.value.length)})`,
-        params: [...valueExpression.params, ...filter.value],
+        sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} NOT IN (${placeholders(filter.value.length)})`,
+        params: [...typeExpression.params, ...valueExpression.params, ...filter.value],
       };
     case "contains":
       return {
