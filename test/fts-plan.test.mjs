@@ -89,6 +89,59 @@ test(
   },
 );
 
+test(
+  "FTS plan join is locale-safe and does not mix a stale cross-locale FTS row",
+  { skip: skipWithoutFts5 },
+  () => {
+    // ec_*.id is a PRIMARY KEY in EmDash, so a single id resolves to one locale.
+    // The `AND f.locale IS c.locale` predicate is defense-in-depth: a stale FTS
+    // row whose locale drifted from its content row must not pair across locale.
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+    CREATE TABLE ec_pages (
+      id TEXT PRIMARY KEY,
+      slug TEXT,
+      locale TEXT,
+      status TEXT,
+      title TEXT,
+      body TEXT,
+      deleted_at TEXT
+    );
+
+    CREATE VIRTUAL TABLE _emdash_fts_pages USING fts5(
+      id UNINDEXED,
+      locale UNINDEXED,
+      title,
+      body,
+      tokenize = 'porter unicode61'
+    );
+
+    INSERT INTO ec_pages (id, slug, locale, status, title, body, deleted_at) VALUES
+      ('page1', 'english', 'en', 'published', 'English Title', 'Workers content in English.', NULL);
+
+    INSERT INTO _emdash_fts_pages (id, locale, title, body) VALUES
+      ('page1', 'de', 'English Title', 'Workers content in English.');
+  `);
+
+    // Query without a locale filter so only the join predicate guards locale.
+    const plan = buildEmDashFts5Plan({
+      collection: "pages",
+      query: "workers",
+      searchableFields: ["title", "body"],
+      limit: 5,
+    });
+
+    assert.ok(plan);
+    const rows = db
+      .prepare(plan.sql)
+      .all(...plan.params)
+      .map((row) => ({ ...row }));
+
+    // The FTS row (locale 'de') must not join the content row (locale 'en').
+    assert.equal(rows.length, 0);
+  },
+);
+
 test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
   assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');

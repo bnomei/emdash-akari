@@ -84,7 +84,7 @@ SELECT
   snippet("${ftsTable}", 2, '<mark>', '</mark>', '...', 32) AS snippet,
   ${bm25} AS score
 FROM "${ftsTable}" f
-JOIN "${contentTable}" c ON f.id = c.id
+JOIN "${contentTable}" c ON f.id = c.id AND f.locale IS c.locale
 WHERE "${ftsTable}" MATCH ?
   AND c.status = ?
   AND c.deleted_at IS NULL
