@@ -570,6 +570,33 @@ test("content fallback executes private structural discovery without D1", async 
   ]);
 });
 
+test("facets count non-identity data fields like category", async () => {
+  const articles = [
+    { id: "a1", type: "articles", slug: "a1", status: "published", locale: "en", data: { title: "A1", category: "news" } },
+    { id: "a2", type: "articles", slug: "a2", status: "published", locale: "en", data: { title: "A2", category: "news" } },
+    { id: "a3", type: "articles", slug: "a3", status: "published", locale: "en", data: { title: "A3", category: "opinion" } },
+  ];
+  const articleContent = {
+    async get(_collection, id) {
+      return articles.find((item) => item.id === id) ?? null;
+    },
+    async list() {
+      return { items: articles, hasMore: false };
+    },
+  };
+
+  const response = await runAkariQuery(
+    normalizeQueryInput({ mode: "structural", collections: ["articles"], facets: ["category"], limit: 20 }),
+    { content: articleContent },
+  );
+
+  const categoryFacet = response.facets?.find((facet) => facet.key === "category");
+  assert.deepEqual(categoryFacet?.buckets, [
+    { value: "news", count: 2 },
+    { value: "opinion", count: 1 },
+  ]);
+});
+
 test("structural mode applies q as a filter and ranking signal", async () => {
   // A query that matches nothing must return no items, not the whole collection.
   const noMatch = await runAkariQuery(

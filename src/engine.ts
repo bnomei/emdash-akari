@@ -1,6 +1,11 @@
 import { search as emdashSearch } from "emdash";
 import type { ContentAccess, SearchOptions, SearchResponse } from "emdash";
-import { getStringEqualityFilter, getStringSetFilter, matchesMetadataFilters } from "./filter";
+import {
+  getStringEqualityFilter,
+  getStringSetFilter,
+  matchesMetadataFilters,
+  readMetadataField,
+} from "./filter";
 import { evaluatePathFilters, readAkariJsonPathValues } from "./paths";
 import { reciprocalRankFusion, resultKey, type AkariRankedCandidate } from "./ranking";
 import type {
@@ -550,10 +555,25 @@ function buildFacetValues(
         .map((value) => stringifyFacetValue(value.value))
         .filter((value): value is string => typeof value === "string");
       if (out[key].length === 0 && matchedPaths.length > 0) out[key] = matchedPaths;
+    } else {
+      // Facet on any other metadata/data field (e.g. "category", "author",
+      // "seo.title"): read it from the entry metadata so non-identity fields
+      // produce buckets instead of silently resolving to nothing.
+      const values = toFacetValueStrings(
+        readMetadataField(buildContentMetadata(collection, item), key),
+      );
+      if (values.length > 0) out[key] = values;
     }
   }
 
   return out;
+}
+
+function toFacetValueStrings(value: unknown): string[] {
+  const source = Array.isArray(value) ? value : [value];
+  return source
+    .map((entry) => stringifyFacetValue(entry))
+    .filter((entry): entry is string => typeof entry === "string");
 }
 
 function fallbackFacetValues(item: AkariResult, key: string): string[] {
