@@ -444,6 +444,57 @@ test("lexical post-filter honors non-equality status filters via real metadata",
   assert.equal(response.items[0].identity.id, "about");
 });
 
+test("lexical leg enforces path filters against the resolved entry body", async () => {
+  // The provider returns the published `home` page, but the path filter requires
+  // a block of type "text" which home does not have. The FTS hit must be dropped.
+  const input = normalizeQueryInput({
+    q: "workers",
+    mode: "lexical",
+    collections: ["pages"],
+    paths: [{ path: "$.blocks[*].type", op: "eq", value: "text" }],
+    limit: 5,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      {
+        collection: "pages",
+        id: "home",
+        slug: "home",
+        locale: "en",
+        title: "Workers AI Search",
+        score: 9,
+      },
+    ],
+  });
+
+  const response = await runAkariQuery(input, { content, lexicalSearch });
+
+  // home has hero/embed blocks only; content scan also rejects it, so no candidate survives.
+  assert.equal(response.items.length, 0);
+});
+
+test("lexical leg drops hits when paths are set but no content access is available", async () => {
+  const input = normalizeQueryInput({
+    q: "workers",
+    mode: "lexical",
+    collections: ["pages"],
+    paths: [{ path: "$.blocks[*].type", op: "eq", value: "embed" }],
+    limit: 5,
+  });
+
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "home", slug: "home", locale: "en", title: "Home", score: 9 },
+    ],
+  });
+
+  // No content provider: path constraints cannot be verified, so the FTS hit fails closed.
+  const response = await runAkariQuery(input, { lexicalSearch });
+
+  assert.equal(response.items.length, 0);
+});
+
 test("resolve returns ambiguity when top fused candidates are too close", async () => {
   const input = normalizeResolveInput({
     q: "workers ai search",

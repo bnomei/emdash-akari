@@ -160,10 +160,23 @@ async function runLexicalSearch(
     cursor: input.after ?? undefined,
   });
 
+  const hasPathFilters = (input.paths?.length ?? 0) > 0;
   const out: EngineCandidate[] = [];
   for (const item of response.items) {
-    const metadata = await resolveLexicalMetadata(item, content);
+    const full = await fetchLexicalEntry(item, content);
+    const metadata = full ? buildContentMetadata(item.collection, full) : lexicalHitMetadata(item);
     if (!matchesMetadataFilters(metadata, input.filter)) continue;
+
+    let matchedPaths: string[] = [];
+    if (hasPathFilters) {
+      // Path constraints require the entry body. Without it the FTS hit cannot
+      // be verified against the documented paths contract, so fail closed.
+      if (!full) continue;
+      const pathResult = evaluatePathFilters(full.data, input.paths);
+      if (!pathResult.matched) continue;
+      matchedPaths = pathResult.matchedPaths;
+    }
+
     out.push({
       source: "fts",
       score: item.score,
@@ -179,7 +192,7 @@ async function runLexicalSearch(
         score: item.score,
         snippet: item.snippet,
         matchedFields: ["fts"],
-        matchedPaths: [],
+        matchedPaths,
       },
     });
   }
@@ -187,19 +200,19 @@ async function runLexicalSearch(
   return out;
 }
 
-async function resolveLexicalMetadata(
+async function fetchLexicalEntry(
   item: SearchResponse["items"][number],
   content: ContentAccess | undefined,
-): Promise<Record<string, unknown>> {
-  if (content) {
-    try {
-      const full = await content.get(item.collection, item.id);
-      if (full) return buildContentMetadata(item.collection, full);
-    } catch {
-      // Fall back to hit-only metadata when the entry cannot be fetched.
-    }
+): Promise<AkariContentItem | null> {
+  if (!content) return null;
+  try {
+    return await content.get(item.collection, item.id);
+  } catch {
+    return null;
   }
+}
 
+function lexicalHitMetadata(item: SearchResponse["items"][number]): Record<string, unknown> {
   return {
     collection: item.collection,
     id: item.id,
