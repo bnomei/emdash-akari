@@ -699,6 +699,39 @@ test("resolve detects ambiguity even when input limit is 1", async () => {
   assert.equal(response.alternatives?.length, 2);
 });
 
+test("ambiguous resolve honors maxAlternatives below two", async () => {
+  const lexicalSearch = async () => ({
+    items: [
+      { collection: "pages", id: "home", slug: "home", locale: "en", title: "Home", score: 10 },
+      { collection: "pages", id: "about", slug: "about", locale: "en", title: "About", score: 9 },
+    ],
+  });
+
+  const zero = await resolveAkariQuery(
+    normalizeResolveInput({
+      q: "workers ai search",
+      mode: "lexical",
+      collections: ["pages"],
+      maxAlternatives: 0,
+    }),
+    { lexicalSearch, ambiguityMargin: 1 },
+  );
+  assert.equal(zero.status, "ambiguous");
+  assert.equal(zero.alternatives.length, 0);
+
+  const one = await resolveAkariQuery(
+    normalizeResolveInput({
+      q: "workers ai search",
+      mode: "lexical",
+      collections: ["pages"],
+      maxAlternatives: 1,
+    }),
+    { lexicalSearch, ambiguityMargin: 1 },
+  );
+  assert.equal(one.status, "ambiguous");
+  assert.equal(one.alternatives.length, 1);
+});
+
 test("rank fusion boosts overlap deterministically", () => {
   const fused = reciprocalRankFusion([
     [

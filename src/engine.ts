@@ -148,7 +148,9 @@ export async function resolveAkariQuery(
   if (second && firstScore - secondScore <= margin) {
     return {
       status: "ambiguous",
-      alternatives: response.items.slice(0, Math.max(maxAlternatives, 2)).map(project),
+      // Honor maxAlternatives exactly (including 0/1); the ambiguous branch
+      // starts at index 0 because there is no single resolved item to exclude.
+      alternatives: response.items.slice(0, maxAlternatives).map(project),
       warnings: [
         ...(response.warnings ?? []),
         "Top candidates are too close to resolve automatically.",
