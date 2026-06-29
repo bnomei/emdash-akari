@@ -201,9 +201,10 @@ async function runLexicalSearch(
 ): Promise<{ candidates: EngineCandidate[]; nextCursor?: string }> {
   if (!input.q) return { candidates: [] };
 
+  const indexedStatus = getStringEqualityFilter(input.filter, "status");
   const response = await searchProvider(input.q, {
     collections: collections.length > 0 ? collections : undefined,
-    status: getStringEqualityFilter(input.filter, "status"),
+    status: indexedStatus,
     locale: getStringEqualityFilter(input.filter, "locale"),
     limit: Math.max(input.limit * 2, input.limit),
     cursor: input.after ?? undefined,
@@ -213,7 +214,9 @@ async function runLexicalSearch(
   const out: EngineCandidate[] = [];
   for (const item of response.items) {
     const full = await fetchLexicalEntry(item, content);
-    const metadata = full ? buildContentMetadata(item.collection, full) : lexicalHitMetadata(item);
+    const metadata = full
+      ? buildContentMetadata(item.collection, full)
+      : lexicalHitMetadata(item, { status: indexedStatus });
     if (!matchesMetadataFilters(metadata, input.filter)) continue;
 
     let matchedPaths: string[] = [];
@@ -260,8 +263,11 @@ async function fetchLexicalEntry(
   }
 }
 
-function lexicalHitMetadata(item: SearchResponse["items"][number]): Record<string, unknown> {
-  return {
+function lexicalHitMetadata(
+  item: SearchResponse["items"][number],
+  indexedFilters: { status?: string } = {},
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
     collection: item.collection,
     id: item.id,
     entry_id: item.id,
@@ -269,6 +275,8 @@ function lexicalHitMetadata(item: SearchResponse["items"][number]): Record<strin
     locale: item.locale,
     title: item.title,
   };
+  if (indexedFilters.status !== undefined) metadata.status = indexedFilters.status;
+  return metadata;
 }
 
 async function scanContent(
@@ -591,10 +599,7 @@ function stripRedundantCollectionFilter<T extends AkariValidatedQueryInput>(
   return { ...input, filter: Object.keys(rest).length > 0 ? rest : undefined };
 }
 
-function buildContentMetadata(
-  collection: string,
-  item: AkariContentItem,
-): Record<string, unknown> {
+function buildContentMetadata(collection: string, item: AkariContentItem): Record<string, unknown> {
   return {
     ...item.data,
     collection,

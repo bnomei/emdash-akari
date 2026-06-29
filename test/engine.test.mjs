@@ -293,9 +293,37 @@ test("facts replacement from extraction clears stale rows when nothing matches",
 
   assert.equal(statements.length, 1);
   assert.equal(statements[0].sql.startsWith("DELETE"), true);
-  assert.deepEqual(statements[0].params, ["pages", "home", "en"]);
+  assert.match(statements[0].sql, /path_template IN \(\?\)/);
+  assert.deepEqual(statements[0].params, ["pages", "home", "en", "$.blocks[*].type"]);
 
   assert.deepEqual(buildReplaceFactsStatements([]), []);
+});
+
+test("facts replacement from extraction clears requested templates that now emit no facts", () => {
+  const statements = buildReplaceFactsStatementsFromExtraction({
+    collection: "pages",
+    entryId: "home",
+    locale: "en",
+    status: "published",
+    data: { blocks: [{ type: "hero" }] },
+    pathTemplates: ["$.blocks[*].type", "$.blocks[*].url"],
+  });
+
+  const del = statements.find((s) => s.sql.startsWith("DELETE"));
+  const inserts = statements.filter((s) => s.sql.startsWith("INSERT"));
+
+  assert.match(del.sql, /path_template IN \(\?, \?\)/);
+  assert.deepEqual(del.params, ["pages", "home", "en", "$.blocks[*].type", "$.blocks[*].url"]);
+  assert.equal(inserts.length, 1);
+  assert.deepEqual(inserts[0].params.slice(0, 7), [
+    "pages",
+    "home",
+    "en",
+    "published",
+    "$.blocks[*].type",
+    "$.blocks[0].type",
+    "string",
+  ]);
 });
 
 test("facts replace is idempotent for duplicate templates / colliding facts", () => {
@@ -326,7 +354,8 @@ test("facts replace is idempotent for duplicate templates / colliding facts", ()
     value === undefined ? null : typeof value === "boolean" ? (value ? 1 : 0) : value;
 
   assert.doesNotThrow(() => {
-    for (const statement of statements) db.prepare(statement.sql).run(...statement.params.map(bind));
+    for (const statement of statements)
+      db.prepare(statement.sql).run(...statement.params.map(bind));
   });
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM _emdash_content_facts").get().n, 1);
 });
@@ -460,10 +489,9 @@ test("multi-wildcard paths: JS engine and SQL compiler agree", () => {
   insert.run("object", JSON.stringify({ a: [{ b: { x: "z" } }] }));
   insert.run("scalar", JSON.stringify({ a: [{ b: "z" }] }));
 
-  const compiled = compileStructuralFilters(
-    [{ path: "$.a[*].b[*]", op: "eq", value: "z" }],
-    { dataExpression: "e.data" },
-  );
+  const compiled = compileStructuralFilters([{ path: "$.a[*].b[*]", op: "eq", value: "z" }], {
+    dataExpression: "e.data",
+  });
   const sql = `
     SELECT DISTINCT e.id
     FROM entries AS e
@@ -511,7 +539,12 @@ test("multi-wildcard SQL keeps same first-wildcard grouping", () => {
   insert.run("same", JSON.stringify({ a: [{ kind: "target", b: ["z"] }] }));
   insert.run(
     "split",
-    JSON.stringify({ a: [{ kind: "target", b: [] }, { kind: "other", b: ["z"] }] }),
+    JSON.stringify({
+      a: [
+        { kind: "target", b: [] },
+        { kind: "other", b: ["z"] },
+      ],
+    }),
   );
 
   const filters = [
@@ -534,7 +567,12 @@ test("multi-wildcard SQL keeps same first-wildcard grouping", () => {
   assert.deepEqual(rows, ["same"]);
   assert.equal(
     evaluatePathFilters(
-      { a: [{ kind: "target", b: [] }, { kind: "other", b: ["z"] }] },
+      {
+        a: [
+          { kind: "target", b: [] },
+          { kind: "other", b: ["z"] },
+        ],
+      },
       filters,
     ).matched,
     false,
@@ -643,8 +681,9 @@ test("structural contains agrees with the runtime evaluator on arrays", () => {
   assert.deepEqual(run(","), []);
 
   assert.equal(
-    evaluatePathFilters({ tags: ["alpha", "beta"] }, [{ path: "$.tags", op: "contains", value: "ph" }])
-      .matched,
+    evaluatePathFilters({ tags: ["alpha", "beta"] }, [
+      { path: "$.tags", op: "contains", value: "ph" },
+    ]).matched,
     false,
   );
   assert.equal(
@@ -677,7 +716,8 @@ test("structural ne agrees with the runtime evaluator on non-scalar values", () 
   assert.deepEqual(rows, ["scalar"]);
 
   assert.equal(
-    evaluatePathFilters({ meta: { id: 1 } }, [{ path: "$.meta", op: "ne", value: "draft" }]).matched,
+    evaluatePathFilters({ meta: { id: 1 } }, [{ path: "$.meta", op: "ne", value: "draft" }])
+      .matched,
     false,
   );
   assert.equal(
@@ -784,9 +824,30 @@ test("path facets do not borrow filter matchedPaths as bucket values", async () 
 
 test("facets count non-identity data fields like category", async () => {
   const articles = [
-    { id: "a1", type: "articles", slug: "a1", status: "published", locale: "en", data: { title: "A1", category: "news" } },
-    { id: "a2", type: "articles", slug: "a2", status: "published", locale: "en", data: { title: "A2", category: "news" } },
-    { id: "a3", type: "articles", slug: "a3", status: "published", locale: "en", data: { title: "A3", category: "opinion" } },
+    {
+      id: "a1",
+      type: "articles",
+      slug: "a1",
+      status: "published",
+      locale: "en",
+      data: { title: "A1", category: "news" },
+    },
+    {
+      id: "a2",
+      type: "articles",
+      slug: "a2",
+      status: "published",
+      locale: "en",
+      data: { title: "A2", category: "news" },
+    },
+    {
+      id: "a3",
+      type: "articles",
+      slug: "a3",
+      status: "published",
+      locale: "en",
+      data: { title: "A3", category: "opinion" },
+    },
   ];
   const articleContent = {
     async get(_collection, id) {
@@ -798,7 +859,12 @@ test("facets count non-identity data fields like category", async () => {
   };
 
   const response = await runAkariQuery(
-    normalizeQueryInput({ mode: "structural", collections: ["articles"], facets: ["category"], limit: 20 }),
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["articles"],
+      facets: ["category"],
+      limit: 20,
+    }),
     { content: articleContent },
   );
 
@@ -962,6 +1028,39 @@ test("lexical post-filter drops hits whose real metadata fails the filter", asyn
   assert.equal(response.items.length, 0);
 });
 
+test("lexical-only fallback honors equality status filters enforced by the provider", async () => {
+  const input = normalizeQueryInput({
+    q: "workers",
+    mode: "lexical",
+    collections: ["pages"],
+    filter: { status: "published" },
+    limit: 5,
+  });
+  let seenStatus;
+
+  const lexicalSearch = async (_query, options) => {
+    seenStatus = options.status;
+    return {
+      items: [
+        {
+          collection: "pages",
+          id: "home",
+          slug: "home",
+          locale: "en",
+          title: "Workers AI Search",
+          score: 9,
+        },
+      ],
+    };
+  };
+
+  const response = await runAkariQuery(input, { lexicalSearch });
+
+  assert.equal(seenStatus, "published");
+  assert.equal(response.items.length, 1);
+  assert.equal(response.items[0].identity.id, "home");
+});
+
 test("lexical post-filter honors non-equality status filters via real metadata", async () => {
   const input = normalizeQueryInput({
     q: "zzzznomatch",
@@ -1065,7 +1164,12 @@ test("query applies the validated sort parameter to fused results", async () => 
   );
 
   const descending = await runAkariQuery(
-    normalizeQueryInput({ mode: "structural", collections: ["pages"], sort: ["-title"], limit: 10 }),
+    normalizeQueryInput({
+      mode: "structural",
+      collections: ["pages"],
+      sort: ["-title"],
+      limit: 10,
+    }),
     { content },
   );
   assert.deepEqual(
@@ -1262,7 +1366,13 @@ test("rank fusion does not let a null content field erase an FTS identity value"
         key: "pages:home:en",
         source: "content",
         result: {
-          identity: { collection: "pages", id: "home", locale: "en", slug: null, title: "Workers AI" },
+          identity: {
+            collection: "pages",
+            id: "home",
+            locale: "en",
+            slug: null,
+            title: "Workers AI",
+          },
         },
       },
     ],

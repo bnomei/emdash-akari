@@ -37,6 +37,7 @@ export type AkariFactsReplacementTarget = {
   collection: string;
   entryId: string;
   locale?: string | null;
+  pathTemplates?: string[];
 };
 
 export const AKARI_FACTS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS _emdash_content_facts (
@@ -76,7 +77,7 @@ export type ExtractFactsOptions = {
 export function extractContentFacts(options: ExtractFactsOptions): AkariContentFact[] {
   const facts: AkariContentFact[] = [];
 
-  for (const pathTemplate of [...new Set(options.pathTemplates)]) {
+  for (const pathTemplate of new Set(options.pathTemplates)) {
     const values = readAkariJsonPathValues(options.data, pathTemplate);
 
     for (const item of values) {
@@ -112,6 +113,7 @@ export function buildReplaceFactsStatementsFromExtraction(
     collection: options.collection,
     entryId: options.entryId,
     locale: options.locale,
+    pathTemplates: uniquePathTemplates(options.pathTemplates),
   });
 }
 
@@ -125,23 +127,23 @@ export function buildReplaceFactsStatements(
 ): AkariFactSqlStatement[] {
   if (facts.length === 0) {
     if (!target) return [];
-    return [
-      {
-        sql: "DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '')",
-        params: [target.collection, target.entryId, target.locale ?? null],
-      },
-    ];
+    return [buildDeleteFactsStatement(target)];
   }
 
-  const scopes = collectFactScopes(facts);
+  const scopes =
+    target?.pathTemplates && target.pathTemplates.length > 0
+      ? [
+          {
+            collection: target.collection,
+            entryId: target.entryId,
+            locale: target.locale,
+            pathTemplates: target.pathTemplates,
+          },
+        ]
+      : collectFactScopes(facts);
 
   return [
-    ...scopes.map((scope) => ({
-      sql: `DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '') AND path_template IN (${placeholders(
-        scope.pathTemplates.length,
-      )})`,
-      params: [scope.collection, scope.entryId, scope.locale ?? null, ...scope.pathTemplates],
-    })),
+    ...scopes.map(buildDeleteFactsStatement),
     ...facts.map((fact) => ({
       sql: `INSERT OR REPLACE INTO _emdash_content_facts (
   collection,
@@ -202,6 +204,26 @@ function collectFactScopes(facts: AkariContentFact[]): AkariFactScope[] {
   }
 
   return [...scopes.values()].map(({ templateSet: _templateSet, ...scope }) => scope);
+}
+
+function buildDeleteFactsStatement(target: AkariFactsReplacementTarget): AkariFactSqlStatement {
+  if (target.pathTemplates && target.pathTemplates.length > 0) {
+    return {
+      sql: `DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '') AND path_template IN (${placeholders(
+        target.pathTemplates.length,
+      )})`,
+      params: [target.collection, target.entryId, target.locale ?? null, ...target.pathTemplates],
+    };
+  }
+
+  return {
+    sql: "DELETE FROM _emdash_content_facts WHERE collection = ? AND entry_id = ? AND COALESCE(locale, '') = COALESCE(?, '')",
+    params: [target.collection, target.entryId, target.locale ?? null],
+  };
+}
+
+function uniquePathTemplates(pathTemplates: string[]): string[] {
+  return [...new Set(pathTemplates)];
 }
 
 function placeholders(length: number): string {

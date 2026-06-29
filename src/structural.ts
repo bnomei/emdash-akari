@@ -51,8 +51,7 @@ type AkariWildcardFilterGroup = {
 };
 
 const sqlIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const sqlColumnReferencePattern =
-  /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
+const sqlColumnReferencePattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
 /**
  * Compile multiple path filters; groups share outer `json_each` joins by first wildcard parent.
