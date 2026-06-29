@@ -1,3 +1,6 @@
+/**
+ * Compile Akari path filters into SQLite/D1 structural SQL (`json_extract`, `json_each`).
+ */
 import {
   parseAkariJsonPath,
   toSqliteJsonPath,
@@ -25,21 +28,40 @@ type AkariJsonSqlExpression = {
   params: AkariScalar[];
 };
 
+type AkariJsonSqlSource = {
+  valueSql: string;
+  typeSql: string;
+  pathSql: string;
+};
+
+type AkariCompiledTokenPredicate = {
+  joins: string[];
+  where: string;
+  joinParams: AkariScalar[];
+  whereParams: AkariScalar[];
+  matchedPathExpression: string;
+};
+
 type AkariWildcardFilterGroup = {
   eachPath: string;
   filters: Array<{
     filter: AkariPathFilter;
-    suffixPath: string;
+    suffixTokens: AkariPathToken[];
   }>;
 };
 
 const sqlIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const sqlColumnReferencePattern = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 
+/**
+ * Compile multiple path filters; groups share outer `json_each` joins by first wildcard parent.
+ */
 export function compileStructuralFilters(
   filters: AkariPathFilter[] | undefined,
   options: AkariStructuralCompileOptions = {},
 ): AkariStructuralSqlPlan {
   const dataExpression = options.dataExpression ?? "e.data";
+  assertColumnReference(dataExpression, "data expression");
   const baseJoinPrefix = options.joinPrefix ?? "akari_path";
   const plans: AkariStructuralSqlPlan[] = [];
   const wildcardGroups = new Map<string, AkariWildcardFilterGroup>();
@@ -81,11 +103,13 @@ export function compileStructuralFilters(
   };
 }
 
+/** Compile a single path filter into joins, WHERE clauses, and bound parameters. */
 export function compileStructuralFilter(
   filter: AkariPathFilter,
   options: AkariStructuralCompileOptions = {},
 ): AkariStructuralSqlPlan {
   const dataExpression = options.dataExpression ?? "e.data";
+  assertColumnReference(dataExpression, "data expression");
   const joinPrefix = options.joinPrefix ?? "akari_path";
   assertSqlIdentifier(joinPrefix, "join prefix");
 
@@ -137,7 +161,7 @@ function toWildcardFilterGroup(
     filters: [
       {
         filter,
-        suffixPath: tokensToSqlitePath(afterWildcard),
+        suffixTokens: afterWildcard,
       },
     ],
   };
@@ -151,38 +175,107 @@ function compileWildcardFilterGroup(
   const alias = joinPrefix;
   assertSqlIdentifier(alias, "join prefix");
 
+  const joins = [
+    `JOIN json_each(${dataExpression}, ?) AS ${alias} ON json_type(${dataExpression}, ?) = 'array'`,
+  ];
+  const joinParams: AkariScalar[] = [group.eachPath, group.eachPath];
   const where: string[] = [];
   const whereParams: AkariScalar[] = [];
   const matchedPathExpressions: string[] = [];
 
-  for (const { filter, suffixPath } of group.filters) {
-    const valueExpression =
-      suffixPath === "$"
-        ? { sql: `${alias}.value`, params: [] }
-        : { sql: `json_extract(${alias}.value, ?)`, params: [suffixPath] };
-    const typeExpression =
-      suffixPath === "$"
-        ? { sql: `${alias}.type`, params: [] }
-        : { sql: `json_type(${alias}.value, ?)`, params: [suffixPath] };
-    const compiled = compilePathPredicate(filter, valueExpression, typeExpression);
-
-    where.push(compiled.sql);
-    whereParams.push(...compiled.params);
-    matchedPathExpressions.push(
-      suffixPath === "$"
-        ? `${alias}.fullkey`
-        : `(${alias}.fullkey || '${suffixPath.slice(1).replaceAll("'", "''")}')`,
+  for (const [index, { filter, suffixTokens }] of group.filters.entries()) {
+    const compiled = compileTokenPredicate(
+      filter,
+      {
+        valueSql: `${alias}.value`,
+        typeSql: `${alias}.type`,
+        pathSql: `${alias}.fullkey`,
+      },
+      suffixTokens,
+      `${alias}_nested_${index}`,
     );
+
+    joins.push(...compiled.joins);
+    joinParams.push(...compiled.joinParams);
+    where.push(compiled.where);
+    whereParams.push(...compiled.whereParams);
+    matchedPathExpressions.push(compiled.matchedPathExpression);
   }
 
   return {
-    joins: [`JOIN json_each(${dataExpression}, ?) AS ${alias}`],
+    joins,
     where,
-    params: [group.eachPath, ...whereParams],
-    joinParams: [group.eachPath],
+    params: [...joinParams, ...whereParams],
+    joinParams,
     whereParams,
     matchedPathExpressions,
   };
+}
+
+function compileTokenPredicate(
+  filter: AkariPathFilter,
+  source: AkariJsonSqlSource,
+  tokens: AkariPathToken[],
+  aliasPrefix: string,
+): AkariCompiledTokenPredicate {
+  const wildcardIndex = tokens.findIndex((token) => token.type === "wildcard");
+
+  if (wildcardIndex === -1) {
+    const suffixPath = tokensToSqlitePath(tokens);
+    const valueExpression =
+      suffixPath === "$"
+        ? { sql: source.valueSql, params: [] }
+        : { sql: `json_extract(${source.valueSql}, ?)`, params: [suffixPath] };
+    const typeExpression =
+      suffixPath === "$"
+        ? { sql: source.typeSql, params: [] }
+        : { sql: `json_type(${source.valueSql}, ?)`, params: [suffixPath] };
+    const compiled = compilePathPredicate(filter, valueExpression, typeExpression);
+    const matchedPathExpression =
+      suffixPath === "$"
+        ? source.pathSql
+        : `(${source.pathSql} || '${suffixPath.slice(1).replaceAll("'", "''")}')`;
+
+    return {
+      joins: [],
+      where: compiled.sql,
+      joinParams: [],
+      whereParams: compiled.params,
+      matchedPathExpression,
+    };
+  }
+
+  const alias = aliasPrefix;
+  assertSqlIdentifier(alias, "nested join alias");
+  const beforeWildcard = tokens.slice(0, wildcardIndex);
+  const afterWildcard = tokens.slice(wildcardIndex + 1);
+  const eachPath = tokensToSqlitePath(beforeWildcard);
+  const safeSource = jsonTraversableExpression(source.valueSql, source.typeSql);
+  const nested = compileTokenPredicate(
+    filter,
+    {
+      valueSql: `${alias}.value`,
+      typeSql: `${alias}.type`,
+      pathSql: `(${source.pathSql} || substr(${alias}.fullkey, 2))`,
+    },
+    afterWildcard,
+    `${alias}_0`,
+  );
+
+  return {
+    joins: [
+      `JOIN json_each(${safeSource}, ?) AS ${alias} ON json_type(${safeSource}, ?) = 'array'`,
+      ...nested.joins,
+    ],
+    where: nested.where,
+    joinParams: [eachPath, eachPath, ...nested.joinParams],
+    whereParams: nested.whereParams,
+    matchedPathExpression: nested.matchedPathExpression,
+  };
+}
+
+function jsonTraversableExpression(sql: string, typeSql: string): string {
+  return `(CASE WHEN ${typeSql} IN ('array', 'object') THEN ${sql} ELSE 'null' END)`;
 }
 
 function compilePathPredicate(
@@ -208,8 +301,9 @@ function compilePathPredicate(
         };
       }
       return {
-        sql: `${valueExpression.sql} != ?`,
-        params: [...valueExpression.params, filter.value],
+        // Align with runtime `ne`: scalar-only, no object/array vacuous matches.
+        sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} != ?`,
+        params: [...typeExpression.params, ...valueExpression.params, filter.value],
       };
     case "in":
       return {
@@ -218,47 +312,59 @@ function compilePathPredicate(
       };
     case "nin":
       return {
-        sql: `${valueExpression.sql} NOT IN (${placeholders(filter.value.length)})`,
-        params: [...valueExpression.params, ...filter.value],
+        sql: `${typeExpression.sql} NOT IN ('object', 'array') AND ${valueExpression.sql} NOT IN (${placeholders(filter.value.length)})`,
+        params: [...typeExpression.params, ...valueExpression.params, ...filter.value],
       };
     case "contains":
       return {
-        sql: `instr(CAST(${valueExpression.sql} AS TEXT), ?) > 0`,
-        params: [...valueExpression.params, filter.value],
+        sql: `((${typeExpression.sql} = 'text' AND instr(${valueExpression.sql}, ?) > 0) OR (${typeExpression.sql} = 'array' AND EXISTS (SELECT 1 FROM json_each(${valueExpression.sql}) AS _akari_contains WHERE _akari_contains.value = ?)))`,
+        params: [
+          ...typeExpression.params,
+          ...valueExpression.params,
+          filter.value,
+          ...typeExpression.params,
+          ...valueExpression.params,
+          filter.value,
+        ],
       };
     case "match":
       return {
-        sql: `LOWER(CAST(${valueExpression.sql} AS TEXT)) LIKE ?`,
-        params: [...valueExpression.params, `%${filter.value.toLowerCase()}%`],
+        sql: `${typeExpression.sql} = 'text' AND instr(LOWER(${valueExpression.sql}), ?) > 0`,
+        params: [...typeExpression.params, ...valueExpression.params, filter.value.toLowerCase()],
       };
     case "gt":
-      return {
-        sql: `${valueExpression.sql} > ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate(">", filter.value, valueExpression, typeExpression);
     case "gte":
-      return {
-        sql: `${valueExpression.sql} >= ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate(">=", filter.value, valueExpression, typeExpression);
     case "lt":
-      return {
-        sql: `${valueExpression.sql} < ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate("<", filter.value, valueExpression, typeExpression);
     case "lte":
-      return {
-        sql: `${valueExpression.sql} <= ?`,
-        params: [...valueExpression.params, filter.value],
-      };
+      return compileRangePredicate("<=", filter.value, valueExpression, typeExpression);
   }
+}
+
+function compileRangePredicate(
+  operator: ">" | ">=" | "<" | "<=",
+  value: string | number,
+  valueExpression: AkariJsonSqlExpression,
+  typeExpression: AkariJsonSqlExpression,
+): { sql: string; params: AkariScalar[] } {
+  // Guard by json_type so mixed-type JSON does not diverge from the runtime evaluator.
+  const typeGuard =
+    typeof value === "number"
+      ? `${typeExpression.sql} IN ('integer', 'real')`
+      : `${typeExpression.sql} = 'text'`;
+  return {
+    sql: `${typeGuard} AND ${valueExpression.sql} ${operator} ?`,
+    params: [...typeExpression.params, ...valueExpression.params, value],
+  };
 }
 
 function tokensToSqlitePath(tokens: AkariPathToken[]): string {
   return tokens.reduce((path, token) => {
     if (token.type === "property") return `${path}.${token.key}`;
     if (token.type === "index") return `${path}[${token.index}]`;
-    throw new Error("Nested wildcard paths are not supported by the single-join compiler yet");
+    throw new Error("Unexpected wildcard token while building a concrete SQLite JSON path");
   }, "$");
 }
 
@@ -268,4 +374,8 @@ function placeholders(length: number): string {
 
 function assertSqlIdentifier(value: string, label: string): void {
   if (!sqlIdentifierPattern.test(value)) throw new Error(`Invalid ${label}: ${value}`);
+}
+
+function assertColumnReference(value: string, label: string): void {
+  if (!sqlColumnReferencePattern.test(value)) throw new Error(`Invalid ${label}: ${value}`);
 }

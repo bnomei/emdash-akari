@@ -89,12 +89,123 @@ test(
   },
 );
 
+test(
+  "FTS plan join is locale-safe and does not mix a stale cross-locale FTS row",
+  { skip: skipWithoutFts5 },
+  () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+    CREATE TABLE ec_pages (
+      id TEXT PRIMARY KEY,
+      slug TEXT,
+      locale TEXT,
+      status TEXT,
+      title TEXT,
+      body TEXT,
+      deleted_at TEXT
+    );
+
+    CREATE VIRTUAL TABLE _emdash_fts_pages USING fts5(
+      id UNINDEXED,
+      locale UNINDEXED,
+      title,
+      body,
+      tokenize = 'porter unicode61'
+    );
+
+    INSERT INTO ec_pages (id, slug, locale, status, title, body, deleted_at) VALUES
+      ('page1', 'english', 'en', 'published', 'English Title', 'Workers content in English.', NULL);
+
+    INSERT INTO _emdash_fts_pages (id, locale, title, body) VALUES
+      ('page1', 'de', 'English Title', 'Workers content in English.');
+  `);
+
+    const plan = buildEmDashFts5Plan({
+      collection: "pages",
+      query: "workers",
+      searchableFields: ["title", "body"],
+      limit: 5,
+    });
+
+    assert.ok(plan);
+    const rows = db
+      .prepare(plan.sql)
+      .all(...plan.params)
+      .map((row) => ({ ...row }));
+
+    assert.equal(rows.length, 0);
+  },
+);
+
+test(
+  "mapFtsRows escapes snippet HTML while preserving mark highlights",
+  { skip: skipWithoutFts5 },
+  () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+    CREATE TABLE ec_pages (
+      id TEXT PRIMARY KEY,
+      slug TEXT,
+      locale TEXT,
+      status TEXT,
+      title TEXT,
+      body TEXT,
+      deleted_at TEXT
+    );
+
+    CREATE VIRTUAL TABLE _emdash_fts_pages USING fts5(
+      id UNINDEXED,
+      locale UNINDEXED,
+      title,
+      body,
+      tokenize = 'porter unicode61'
+    );
+
+    INSERT INTO ec_pages (id, slug, locale, status, title, body, deleted_at) VALUES
+      ('xss', 'xss', 'en', 'published', 'Workers <img src=x onerror=alert(1)> Page', 'body text', NULL);
+
+    INSERT INTO _emdash_fts_pages (id, locale, title, body) VALUES
+      ('xss', 'en', 'Workers <img src=x onerror=alert(1)> Page', 'body text');
+  `);
+
+    const plan = buildEmDashFts5Plan({
+      collection: "pages",
+      query: "workers",
+      searchableFields: ["title", "body"],
+      status: "published",
+      limit: 5,
+    });
+
+    assert.ok(plan);
+    const rows = db
+      .prepare(plan.sql)
+      .all(...plan.params)
+      .map((row) => ({ ...row }));
+
+    const mapped = mapFtsRows("pages", rows);
+    const snippet = mapped[0].snippet;
+
+    assert.ok(!/<img/i.test(snippet), `snippet still contains raw <img>: ${snippet}`);
+    assert.ok(snippet.includes("&lt;img"), `snippet should escape the tag: ${snippet}`);
+    assert.ok(snippet.includes("<mark>"), `snippet should keep <mark>: ${snippet}`);
+  },
+);
+
 test("FTS query escaping documents lexical filter semantics", () => {
   assert.equal(escapeFts5Query("  workers ai  "), '"workers"* "ai"*');
   assert.equal(escapeFts5Query('"workers ai"'), '"workers ai"');
   assert.equal(escapeFts5Query("workers OR d1"), "workers OR d1");
+  assert.equal(escapeFts5Query("salt and pepper"), '"salt"* "and"* "pepper"*');
+  assert.equal(escapeFts5Query("not done"), '"not"* "done"*');
   assert.equal(escapeFts5Query('workers "ai"'), '"workers"* """ai"""*');
   assert.equal(escapeFts5Query("   "), "");
+  assert.equal(escapeFts5Query('"'), "");
+  assert.equal(escapeFts5Query('""'), "");
+  assert.equal(escapeFts5Query('"   "'), "");
+  assert.equal(
+    buildEmDashFts5Plan({ collection: "pages", query: '"', searchableFields: ["title"] }),
+    null,
+  );
   assert.equal(
     buildEmDashFts5Plan({
       collection: "pages",
@@ -103,6 +214,29 @@ test("FTS query escaping documents lexical filter semantics", () => {
     }),
     null,
   );
+});
+
+test("FTS plan omits the status predicate when status is absent", () => {
+  const plan = buildEmDashFts5Plan({
+    collection: "pages",
+    query: "workers",
+    searchableFields: ["title"],
+  });
+
+  assert.ok(plan);
+  assert.doesNotMatch(plan.sql, /AND c\.status = \?/);
+  assert.ok(!plan.params.includes("published"));
+
+  const draftPlan = buildEmDashFts5Plan({
+    collection: "pages",
+    query: "workers",
+    searchableFields: ["title"],
+    status: "draft",
+  });
+  assert.ok(draftPlan);
+  assert.match(draftPlan.sql, /AND c\.status = \?/);
+  assert.ok(draftPlan.params.includes("draft"));
+  assert.ok(!draftPlan.params.includes("published"));
 });
 
 test("FTS plan validates identifiers before raw SQL interpolation", () => {

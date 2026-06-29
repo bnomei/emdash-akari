@@ -1,4 +1,7 @@
-import type { AkariResult } from "./types";
+/**
+ * Reciprocal rank fusion for merging lexical and content-scan candidate layers.
+ */
+import type { AkariIdentity, AkariResult } from "./types";
 
 export type AkariRankedCandidate = {
   key: string;
@@ -20,10 +23,12 @@ type Accumulator = {
   sources: Set<string>;
 };
 
+/** Stable fusion key: `collection:id:locale`. */
 export function resultKey(result: AkariResult): string {
   return `${result.identity.collection}:${result.identity.id}:${result.identity.locale ?? ""}`;
 }
 
+/** Fuse ranked groups by entry key; normalizes scores to [0, 1] within the result set. */
 export function reciprocalRankFusion(
   groups: AkariRankedCandidate[][],
   options: AkariRankFusionOptions = {},
@@ -66,13 +71,26 @@ export function reciprocalRankFusion(
 
 function mergeResult(left: AkariResult, right: AkariResult): AkariResult {
   return {
-    identity: { ...left.identity, ...right.identity },
+    identity: mergeIdentity(left.identity, right.identity),
     score: Math.max(left.score ?? 0, right.score ?? 0),
     snippet: left.snippet ?? right.snippet,
     matchedFields: mergeUnique(left.matchedFields, right.matchedFields),
     matchedPaths: mergeUnique(left.matchedPaths, right.matchedPaths),
     updatedAt: left.updatedAt ?? right.updatedAt,
     publishedAt: left.publishedAt ?? right.publishedAt,
+  };
+}
+
+function mergeIdentity(left: AkariIdentity, right: AkariIdentity): AkariIdentity {
+  // Defined right fields win; null/undefined must not erase an earlier layer's value.
+  return {
+    collection: right.collection ?? left.collection,
+    id: right.id ?? left.id,
+    slug: right.slug ?? left.slug,
+    locale: right.locale ?? left.locale,
+    status: right.status ?? left.status,
+    title: right.title ?? left.title,
+    url: right.url ?? left.url,
   };
 }
 

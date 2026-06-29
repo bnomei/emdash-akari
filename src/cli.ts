@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+/**
+ * `akari` CLI and HTTP client for private EmDash discover/resolve/config routes.
+ */
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
@@ -34,6 +37,7 @@ type WritableLike = {
 
 const routeNames = new Set<AkariRouteName>(["discover", "resolve", "config"]);
 
+/** HTTP or EmDash API envelope failure from a private Akari route call. */
 export class AkariRouteError extends Error {
   constructor(
     message: string,
@@ -49,6 +53,7 @@ export function buildAkariRouteUrl(baseUrl: string, route: AkariRouteName): stri
   return `${baseUrl.replace(/\/+$/, "")}/_emdash/api/plugins/akari/${route}`;
 }
 
+/** Call a private Akari plugin route; unwraps EmDash `{ success, data }` envelopes. */
 export async function callAkariRoute(
   route: AkariRouteName,
   input: unknown = {},
@@ -74,6 +79,7 @@ export async function callAkariRoute(
   return readAkariResponse(response);
 }
 
+/** Typed discover helper over the private plugin route. */
 export async function discoverAkari(
   input: AkariQueryInput,
   options: AkariLocalCallOptions = {},
@@ -81,6 +87,7 @@ export async function discoverAkari(
   return callAkariRoute("discover", input, options) as Promise<AkariQueryResponse>;
 }
 
+/** Typed resolve helper over the private plugin route. */
 export async function resolveAkari(
   input: AkariResolveInput,
   options: AkariLocalCallOptions = {},
@@ -88,6 +95,7 @@ export async function resolveAkari(
   return callAkariRoute("resolve", input, options) as Promise<AkariResolveResponse>;
 }
 
+/** Parse argv, call the requested route, and write JSON to stdout. */
 export async function runAkariCli(
   argv = process.argv.slice(2),
   env: Record<string, string | undefined> = process.env,

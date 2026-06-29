@@ -1,21 +1,27 @@
+/**
+ * Private EmDash plugin route handlers for discover, resolve, and config.
+ */
 import type { RouteContext } from "emdash";
 import { AKARI_ROUTE_CAPABILITIES } from "./constants";
 import { resolveAkariQuery, runAkariQuery, type AkariEngineOptions } from "./engine";
 import { normalizeQueryInput, normalizeResolveInput } from "./input";
 import type { AkariQueryResponse, AkariResolveResponse } from "./types";
 
+/** Factory for the private discover route handler. */
 export function createDiscoverRoute(options: AkariEngineOptions = {}) {
   return async function akariDiscoverRoute(ctx: RouteContext): Promise<AkariQueryResponse> {
     return discoverRoute(ctx, options);
   };
 }
 
+/** Factory for the private resolve route handler. */
 export function createResolveRoute(options: AkariEngineOptions = {}) {
   return async function akariResolveRoute(ctx: RouteContext): Promise<AkariResolveResponse> {
     return resolveRoute(ctx, options);
   };
 }
 
+/** Execute discover: validate input, run the engine, return ranked candidates. */
 export async function discoverRoute(
   ctx: RouteContext,
   options: AkariEngineOptions = {},
@@ -29,6 +35,7 @@ export async function discoverRoute(
   });
 }
 
+/** Execute resolve: fuse candidates and decide resolved vs ambiguous vs not_found. */
 export async function resolveRoute(
   ctx: RouteContext,
   options: AkariEngineOptions = {},

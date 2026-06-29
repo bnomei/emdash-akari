@@ -1,3 +1,7 @@
+/**
+ * Zod schemas for Akari discover/resolve inputs: lexical vs structural mode,
+ * metadata filters, JSON path filters, facets, sort, and field projection.
+ */
 import { z } from "zod";
 import { DEFAULT_LIMIT, MAX_LIMIT } from "./constants";
 

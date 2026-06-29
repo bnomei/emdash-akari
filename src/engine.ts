@@ -1,12 +1,20 @@
+/**
+ * Akari discovery engine: lexical FTS, content scan, reciprocal rank fusion,
+ * facets, sort/projection, and identity resolution.
+ */
 import { search as emdashSearch } from "emdash";
 import type { ContentAccess, SearchOptions, SearchResponse } from "emdash";
-import { getStringEqualityFilter, getStringSetFilter, matchesMetadataFilters } from "./filter";
+import {
+  getStringEqualityFilter,
+  getStringSetFilter,
+  matchesMetadataFilters,
+  readMetadataField,
+} from "./filter";
 import { evaluatePathFilters, readAkariJsonPathValues } from "./paths";
 import { reciprocalRankFusion, resultKey, type AkariRankedCandidate } from "./ranking";
 import type {
   AkariFacet,
   AkariFacetResult,
-  AkariFilter,
   AkariQueryResponse,
   AkariResolveResponse,
   AkariResult,
@@ -19,6 +27,7 @@ export type AkariLexicalSearchProvider = (
   options: SearchOptions,
 ) => Promise<SearchResponse>;
 
+/** Engine wiring: content access, lexical provider, scan budget, and resolve margin. */
 export type AkariEngineOptions = {
   content?: ContentAccess;
   lexicalSearch?: AkariLexicalSearchProvider;
@@ -39,7 +48,9 @@ type EngineCandidate = {
 type AkariContentItem = Awaited<ReturnType<ContentAccess["list"]>>["items"][number];
 
 const defaultAmbiguityMargin = 0.02;
+const contentScanFailurePrefix = "Content scan failed for ";
 
+/** Run discover: fuse lexical and content layers, then sort, limit, facet, and project. */
 export async function runAkariQuery(
   input: AkariValidatedQueryInput,
   options: AkariEngineOptions = {},
@@ -49,18 +60,29 @@ export async function runAkariQuery(
   const facetsByResult = new Map<string, Record<string, string[]>>();
   const collections = resolveCollections(input, options.defaultCollections);
   const lexicalSearch = options.lexicalSearch ?? emdashSearch;
+  const queryInput = stripRedundantCollectionFilter(input, warnings);
 
-  if (usesLexical(input)) {
+  let lexicalNextCursor: string | undefined;
+  let ranContentScan = false;
+
+  if (usesLexical(queryInput)) {
     try {
-      const lexical = await runLexicalSearch(input, collections, lexicalSearch);
-      groups.push(toRankedGroup(lexical, "fts"));
+      const lexical = await runLexicalSearch(
+        queryInput,
+        collections,
+        lexicalSearch,
+        options.content,
+      );
+      groups.push(toRankedGroup(lexical.candidates, "fts"));
+      lexicalNextCursor = lexical.nextCursor;
     } catch (error) {
       warnings.push(`FTS search unavailable: ${getErrorMessage(error)}.`);
     }
   }
 
-  if (shouldRunContentScan(input, options, collections)) {
-    const scanned = await scanContent(input, collections, options, warnings);
+  if (shouldRunContentScan(queryInput, options, collections)) {
+    ranContentScan = true;
+    const scanned = await scanContent(queryInput, collections, options, warnings);
     groups.push(toRankedGroup(scanned, "content"));
 
     for (const candidate of scanned) {
@@ -76,12 +98,21 @@ export async function runAkariQuery(
     );
   }
 
-  const items = reciprocalRankFusion(groups, { limit: input.limit });
-  const facets = buildFacetResults(input.facets, items, facetsByResult);
+  const fused = reciprocalRankFusion(groups);
+  const ordered = input.sort?.length ? applySort(fused, input.sort) : fused;
+  const limited = ordered.slice(0, input.limit);
+  const facets = buildFacetResults(input.facets, limited, facetsByResult);
+  const items = input.select?.length
+    ? limited.map((item) => projectResult(item, input.select ?? []))
+    : limited;
+
+  // Fused multi-layer results have no single continuation token.
+  const nextCursor = ranContentScan ? undefined : lexicalNextCursor;
 
   return {
     items,
     facets,
+    nextCursor,
     warnings: warnings.length > 0 ? warnings : undefined,
     explain: input.explain
       ? {
@@ -93,41 +124,58 @@ export async function runAkariQuery(
   };
 }
 
+/**
+ * Resolve one identity: compare top fused scores and return resolved, ambiguous, or not_found.
+ * Uses a widened candidate pool so client `limit` cannot hide ambiguity.
+ */
 export async function resolveAkariQuery(
   input: AkariValidatedResolveInput,
   options: AkariEngineOptions = {},
 ): Promise<AkariResolveResponse> {
-  const response = await runAkariQuery(input, options);
+  const maxAlternatives = input.maxAlternatives ?? 3;
+  const resolveLimit = Math.max(input.limit, maxAlternatives + 1, 2);
+  const response = await runAkariQuery(
+    { ...input, limit: resolveLimit, sort: undefined, select: undefined },
+    options,
+  );
   const [first, second] = response.items;
+  const project = (item: AkariResult): AkariResult =>
+    input.select?.length ? projectResult(item, input.select) : item;
+  const degraded = (response.warnings ?? []).some((warning) =>
+    warning.startsWith(contentScanFailurePrefix),
+  );
 
   if (!first) {
     return {
       status: "not_found",
       alternatives: [],
       warnings: response.warnings ?? ["No candidate matched the requested identity constraints."],
+      degraded: degraded || undefined,
     };
   }
 
   const margin = options.ambiguityMargin ?? defaultAmbiguityMargin;
   const firstScore = first.score ?? 0;
   const secondScore = second?.score ?? 0;
-  const maxAlternatives = input.maxAlternatives ?? 3;
 
-  if (second && firstScore - secondScore <= margin) {
+  if (degraded || (second && firstScore - secondScore <= margin)) {
     return {
       status: "ambiguous",
-      alternatives: response.items.slice(0, Math.max(maxAlternatives, 2)),
+      alternatives: response.items.slice(0, maxAlternatives).map(project),
       warnings: [
         ...(response.warnings ?? []),
-        "Top candidates are too close to resolve automatically.",
+        degraded
+          ? "Resolution corpus was incomplete: one or more collections failed to scan."
+          : "Top candidates are too close to resolve automatically.",
       ],
+      degraded: degraded || undefined,
     };
   }
 
   return {
     status: "resolved",
-    item: first,
-    alternatives: response.items.slice(1, 1 + maxAlternatives),
+    item: project(first),
+    alternatives: response.items.slice(1, 1 + maxAlternatives).map(project),
     warnings: response.warnings,
   };
 }
@@ -149,22 +197,38 @@ async function runLexicalSearch(
   input: AkariValidatedQueryInput,
   collections: string[],
   searchProvider: AkariLexicalSearchProvider,
-): Promise<EngineCandidate[]> {
-  if (!input.q) return [];
+  content: ContentAccess | undefined,
+): Promise<{ candidates: EngineCandidate[]; nextCursor?: string }> {
+  if (!input.q) return { candidates: [] };
 
+  const indexedStatus = getStringEqualityFilter(input.filter, "status");
   const response = await searchProvider(input.q, {
     collections: collections.length > 0 ? collections : undefined,
-    status: getStringEqualityFilter(input.filter, "status"),
+    status: indexedStatus,
     locale: getStringEqualityFilter(input.filter, "locale"),
     limit: Math.max(input.limit * 2, input.limit),
     cursor: input.after ?? undefined,
   });
 
-  return response.items
-    .filter((item) =>
-      matchesMetadataFilters(searchResultMetadata(item, input.filter), input.filter),
-    )
-    .map((item) => ({
+  const hasPathFilters = (input.paths?.length ?? 0) > 0;
+  const out: EngineCandidate[] = [];
+  for (const item of response.items) {
+    const full = await fetchLexicalEntry(item, content);
+    const metadata = full
+      ? buildContentMetadata(item.collection, full)
+      : lexicalHitMetadata(item, { status: indexedStatus });
+    if (!matchesMetadataFilters(metadata, input.filter)) continue;
+
+    let matchedPaths: string[] = [];
+    if (hasPathFilters) {
+      // Path evidence requires the entry body; without content access the hit is dropped.
+      if (!full) continue;
+      const pathResult = evaluatePathFilters(full.data, input.paths);
+      if (!pathResult.matched) continue;
+      matchedPaths = pathResult.matchedPaths;
+    }
+
+    out.push({
       source: "fts",
       score: item.score,
       result: {
@@ -179,9 +243,40 @@ async function runLexicalSearch(
         score: item.score,
         snippet: item.snippet,
         matchedFields: ["fts"],
-        matchedPaths: [],
+        matchedPaths,
       },
-    }));
+    });
+  }
+
+  return { candidates: out, nextCursor: response.nextCursor };
+}
+
+async function fetchLexicalEntry(
+  item: SearchResponse["items"][number],
+  content: ContentAccess | undefined,
+): Promise<AkariContentItem | null> {
+  if (!content) return null;
+  try {
+    return await content.get(item.collection, item.id);
+  } catch {
+    return null;
+  }
+}
+
+function lexicalHitMetadata(
+  item: SearchResponse["items"][number],
+  indexedFilters: { status?: string } = {},
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    collection: item.collection,
+    id: item.id,
+    entry_id: item.id,
+    slug: item.slug,
+    locale: item.locale,
+    title: item.title,
+  };
+  if (indexedFilters.status !== undefined) metadata.status = indexedFilters.status;
+  return metadata;
 }
 
 async function scanContent(
@@ -204,6 +299,7 @@ async function scanContent(
     try {
       let cursor: string | undefined;
       let scanned = 0;
+      let truncated = false;
 
       do {
         const remaining = fetchLimit - scanned;
@@ -215,6 +311,10 @@ async function scanContent(
         });
 
         for (const item of response.items) {
+          if (scanned >= fetchLimit) {
+            truncated = true;
+            break;
+          }
           scanned += 1;
           const candidate = evaluateContentItem(collection, item, input, options);
           if (candidate) out.push(candidate);
@@ -223,9 +323,11 @@ async function scanContent(
         cursor = response.hasMore ? response.cursor : undefined;
       } while (cursor && scanned < fetchLimit);
 
-      if (cursor) warnings.push(`Content scan reached fetchLimit for ${collection}.`);
+      if (cursor || truncated) {
+        warnings.push(`Content scan reached fetchLimit for ${collection}.`);
+      }
     } catch (error) {
-      warnings.push(`Content scan failed for ${collection}: ${getErrorMessage(error)}.`);
+      warnings.push(`${contentScanFailurePrefix}${collection}: ${getErrorMessage(error)}.`);
     }
   }
 
@@ -249,18 +351,7 @@ function evaluateContentItem(
       options.url?.(buildFallbackUrl(collection, item.slug ?? item.id)) ??
       buildFallbackUrl(collection, item.slug ?? item.id),
   };
-  const metadata = {
-    ...item.data,
-    collection,
-    id: item.id,
-    entry_id: item.id,
-    slug: item.slug,
-    locale: item.locale,
-    status: item.status,
-    updatedAt: item.updatedAt,
-    publishedAt: item.publishedAt,
-    seo: item.seo,
-  };
+  const metadata = buildContentMetadata(collection, item);
 
   if (!matchesMetadataFilters(metadata, input.filter)) return null;
 
@@ -268,9 +359,9 @@ function evaluateContentItem(
   if (!pathResult.matched) return null;
 
   const textScore = input.q ? scoreText(input.q, item) : { score: 1 };
-  if (input.q && textScore.score <= 0 && input.mode !== "structural") return null;
+  if (input.q && textScore.score <= 0) return null;
 
-  const score = input.mode === "structural" ? 1 : textScore.score;
+  const score = input.q ? textScore.score : 1;
 
   return {
     source: "content",
@@ -284,7 +375,7 @@ function evaluateContentItem(
       updatedAt: item.updatedAt,
       publishedAt: item.publishedAt,
     },
-    facetValues: buildFacetValues(input.facets, item, collection, pathResult.matchedPaths),
+    facetValues: buildFacetValues(input.facets, item, collection),
   };
 }
 
@@ -329,6 +420,90 @@ function toRankedGroup(candidates: EngineCandidate[], source: string): AkariRank
   }));
 }
 
+const RESULT_LEVEL_SELECT_FIELDS = [
+  "score",
+  "snippet",
+  "matchedFields",
+  "matchedPaths",
+  "updatedAt",
+  "publishedAt",
+] as const;
+
+const IDENTITY_SELECT_FIELDS = [
+  "collection",
+  "id",
+  "slug",
+  "locale",
+  "status",
+  "title",
+  "url",
+] as const;
+
+function projectResult(item: AkariResult, select: string[]): AkariResult {
+  const selected = new Set(select);
+  const out: Record<string, unknown> = {};
+
+  if (selected.has("identity")) {
+    out.identity = item.identity;
+  } else {
+    const identityFields = IDENTITY_SELECT_FIELDS.filter((field) => selected.has(field));
+    if (identityFields.length > 0) {
+      const identity: Record<string, unknown> = {};
+      for (const field of identityFields) identity[field] = item.identity[field];
+      out.identity = identity;
+    }
+  }
+
+  for (const field of RESULT_LEVEL_SELECT_FIELDS) {
+    if (selected.has(field)) out[field] = item[field];
+  }
+
+  return out as AkariResult;
+}
+
+function applySort(items: AkariResult[], sort: string[]): AkariResult[] {
+  const specs = sort.map((key) =>
+    key.startsWith("-") ? { field: key.slice(1), dir: -1 } : { field: key, dir: 1 },
+  );
+
+  return [...items].sort((a, b) => {
+    for (const { field, dir } of specs) {
+      const av = sortValue(a, field);
+      const bv = sortValue(b, field);
+      if (av === undefined && bv === undefined) continue;
+      if (av === undefined) return 1;
+      if (bv === undefined) return -1;
+      const cmp =
+        typeof av === "number" && typeof bv === "number"
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+      if (cmp !== 0) return cmp * dir;
+    }
+    return 0;
+  });
+}
+
+function sortValue(item: AkariResult, field: string): string | number | undefined {
+  switch (field) {
+    case "score":
+      return item.score;
+    case "updatedAt":
+      return item.updatedAt;
+    case "publishedAt":
+      return item.publishedAt ?? undefined;
+    case "title":
+      return item.identity.title;
+    case "collection":
+      return item.identity.collection;
+    case "status":
+      return item.identity.status;
+    case "locale":
+      return item.identity.locale;
+    default:
+      return undefined;
+  }
+}
+
 function buildFacetResults(
   facets: AkariFacet[] | undefined,
   items: AkariResult[],
@@ -364,7 +539,6 @@ function buildFacetValues(
   facets: AkariFacet[] | undefined,
   item: AkariContentItem,
   collection: string,
-  matchedPaths: string[],
 ): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   if (!facets) return out;
@@ -379,11 +553,22 @@ function buildFacetValues(
       out[key] = readAkariJsonPathValues(item.data, key)
         .map((value) => stringifyFacetValue(value.value))
         .filter((value): value is string => typeof value === "string");
-      if (out[key].length === 0 && matchedPaths.length > 0) out[key] = matchedPaths;
+    } else {
+      const values = toFacetValueStrings(
+        readMetadataField(buildContentMetadata(collection, item), key),
+      );
+      if (values.length > 0) out[key] = values;
     }
   }
 
   return out;
+}
+
+function toFacetValueStrings(value: unknown): string[] {
+  const source = Array.isArray(value) ? value : [value];
+  return source
+    .map((entry) => stringifyFacetValue(entry))
+    .filter((entry): entry is string => typeof entry === "string");
 }
 
 function fallbackFacetValues(item: AkariResult, key: string): string[] {
@@ -396,21 +581,36 @@ function resolveCollections(
   defaults: string[] | undefined,
 ): string[] {
   const fromFilter = getStringSetFilter(input.filter, "collection");
-  return input.collections ?? fromFilter ?? defaults ?? [];
+  const selected = input.collections ?? fromFilter ?? defaults ?? [];
+  return [...new Set(selected)];
 }
 
-function searchResultMetadata(
-  item: SearchResponse["items"][number],
-  filter: AkariFilter | undefined,
-): Record<string, unknown> {
+function stripRedundantCollectionFilter<T extends AkariValidatedQueryInput>(
+  input: T,
+  warnings: string[],
+): T {
+  if (!input.collections || !input.filter || !("collection" in input.filter)) return input;
+
+  const { collection: _collection, ...rest } = input.filter;
+  // Top-level `collections` is the scope selector; `filter.collection` is fallback-only.
+  warnings.push(
+    "filter.collection was ignored because top-level collections was provided; collections is the authoritative scope.",
+  );
+  return { ...input, filter: Object.keys(rest).length > 0 ? rest : undefined };
+}
+
+function buildContentMetadata(collection: string, item: AkariContentItem): Record<string, unknown> {
   return {
-    collection: item.collection,
+    ...item.data,
+    collection,
     id: item.id,
     entry_id: item.id,
     slug: item.slug,
     locale: item.locale,
-    status: getStringEqualityFilter(filter, "status"),
-    title: item.title,
+    status: item.status,
+    updatedAt: item.updatedAt,
+    publishedAt: item.publishedAt,
+    seo: item.seo,
   };
 }
 

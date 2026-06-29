@@ -263,10 +263,22 @@ Use top-level `collections` as the normal collection selector. If `collections`
 is omitted, Akari can fall back to `filter.collection`; otherwise `filter` is
 best reserved for metadata such as `status`, `locale`, or `updatedAt`.
 
+Cursor pagination (`after` / `nextCursor`) is supported only for single-layer
+lexical queries. When Akari fuses the lexical and content-scan layers (the
+default whenever content access is available), the merged ranking has no single
+continuation token, so `nextCursor` is omitted. To paginate, run a lexical-only
+query (no content scan), pass the returned `nextCursor` back as `after`, and
+continue until `nextCursor` is absent.
+
 Lexical mode does not introduce a second content index. Akari plans against the
 same EmDash full-text table convention and uses SQLite
 [FTS5](https://sqlite.org/fts5.html) ranking/snippets so `discover` can return
 an identity-shaped answer instead of only a public search hit.
+
+The exported `buildEmDashFts5Plan` helper omits the status predicate when
+`status` is not provided, so diagnostics and admin tooling can inspect every
+stored status. Pass `status: "published"` or another explicit status when the
+plan should constrain rows.
 
 Lexical queries are normalized before they reach FTS5:
 
@@ -352,6 +364,20 @@ Supported path operators:
 - `contains`, `match`
 - `lt`, `lte`, `gt`, `gte`
 
+Paths may contain `[*]` wildcards. The `discover`/`resolve` engine, materialized
+facts, and exported structural SQL compiler (`compileStructuralFilters`) support
+multiple wildcards in one path (for example, `$.a[*].b[*]`). The SQL compiler
+uses an outer `json_each` join for the first wildcard and nested array-guarded
+`json_each` joins for deeper wildcards.
+
+`ne`/`nin` only match scalar values. `contains` is a substring test for strings
+and an element-membership test for arrays. `match` is a case-insensitive literal
+substring over string values (any `%`/`_` are literal, not wildcards). String
+range comparisons (`lt`/`lte`/`gt`/`gte`) use codepoint ordering — the same
+ordering SQLite applies under its default `BINARY` collation — so results are
+identical whether a filter is evaluated in JS (`discover`) or compiled to D1
+SQLite. These semantics are intentionally aligned across both backends.
+
 For paths that are queried often, Akari exports facts helpers:
 
 ```ts
@@ -359,6 +385,7 @@ import {
   AKARI_FACTS_INDEX_SQL,
   AKARI_FACTS_TABLE_SQL,
   buildReplaceFactsStatements,
+  buildReplaceFactsStatementsFromExtraction,
   extractContentFacts,
 } from "@bnomei/emdash-akari";
 ```
@@ -367,6 +394,14 @@ Those helpers materialize configured structural paths into
 `_emdash_content_facts`. The table keeps both `path_template` values such as
 `$.blocks[*].type` for grouping and concrete `full_path` values such as
 `$.blocks[3].type` for evidence.
+
+Prefer `buildReplaceFactsStatementsFromExtraction(options)` when re-indexing an
+entry: it extracts facts and derives the replacement scope from the same
+options, so it still emits a clearing DELETE when extraction returns zero facts
+(for example after content changes so no configured path matches). Calling
+`buildReplaceFactsStatements(facts)` with an empty `facts` array and no `target`
+is a no-op, because the entry scope cannot be derived from zero rows — pass a
+`target` (or use the from-extraction helper) to clear stale rows.
 
 ## Response Shapes
 
