@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-06-29
+
+- Fixed lexical-only status-filtered searches so provider-filtered hits are not dropped when content access is unavailable.
+- Fixed facts sidecar reindexing so configured path templates that now emit no facts clear stale rows.
+
 ## 0.1.2 - 2026-06-18
 
 - Bumped plugin metadata for the next Akari patch release.
