@@ -18,6 +18,9 @@ coverage/
 .cache/
 .frigg/
 
+# Orb portal metadata
+.amp/portals/*
+
 # Logs
 logs/
 *.log

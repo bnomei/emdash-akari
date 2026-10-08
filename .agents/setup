@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+echo "[setup] Preparing Node 24 (CI/release toolchain) and pinned npm"
+SECONDS=0
+npm_version="$(node -p 'require("./package.json").packageManager.replace(/^npm@/, "")')"
+if [[ "$(node -p 'process.versions.node.split(".")[0]')" != 24 ]]; then
+  if ! command -v n >/dev/null 2>&1; then
+    sudo npm install --global n --no-audit --no-fund
+  fi
+  sudo n 24
+  hash -r
+fi
+if [[ "$(npm --version)" != "$npm_version" ]]; then
+  sudo npm install --global "npm@$npm_version" --no-audit --no-fund
+  hash -r
+fi
+echo "[setup] Toolchain ready in ${SECONDS}s: Node $(node --version), npm $(npm --version)"
+
+echo "[setup] Installing locked dependencies (including development tools)"
+SECONDS=0
+npm ci --include=dev --prefer-offline --no-audit --no-fund
+echo "[setup] Dependencies ready in ${SECONDS}s"

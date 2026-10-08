@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This package needs no authentication, services, or wake-time dependency installs.
