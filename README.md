@@ -37,6 +37,8 @@ Akari is useful when you need to:
 
 ## Quick Start
 
+Requires EmDash 1.2 or newer within 1.x and Node.js 22.16 or newer.
+
 Install the package:
 
 ```sh
@@ -505,6 +507,7 @@ npm test
 The test suite builds the package and then runs Node's test runner against:
 
 - the native EmDash plugin descriptor and private route surface,
+- real EmDash 1.2 SQLite content, FTS pagination, and private runtime route authorization/validation,
 - package loading for the `./admin` subpath with and without the export,
 - route input schemas, normalization, and syntax guards,
 - lexical/content rank fusion and resolve ambiguity,
@@ -583,12 +586,13 @@ support admin diagnostics, draft-aware lookup, agent workflows, and richer
 projections without turning every lookup into a public data exposure problem.
 
 Dashboard/session calls must be same-origin, authenticated as an EmDash user
-with plugin permissions, and include `X-EmDash-Request: 1` on POST requests.
+with `plugins:manage` permission, and include `X-EmDash-Request: 1` on every
+private route request, including GET requests.
 Server-side, CLI, agent, and MCP calls should use
 `Authorization: Bearer <token>` with an EmDash PAT or OAuth access token that
 has the `admin` scope and belongs to an Admin user.
 
-`X-EmDash-Request` is CSRF protection for session-authenticated POST requests.
+`X-EmDash-Request` is CSRF protection for session-authenticated requests.
 It is not authentication.
 
 Public site search should stay on EmDash's existing public search endpoint.

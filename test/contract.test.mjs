@@ -41,7 +41,7 @@ async function importAdminFromPackageFixture(packageJson) {
 test("akariPlugin matches the native EmDash descriptor shape", () => {
   assert.deepEqual(akariPlugin(), {
     id: "akari",
-    version: "0.1.2",
+    version: "0.2.0",
     format: "native",
     entrypoint: "@bnomei/emdash-akari",
     adminEntry: "@bnomei/emdash-akari/admin",
@@ -50,10 +50,13 @@ test("akariPlugin matches the native EmDash descriptor shape", () => {
   });
 });
 
-test("createPlugin registers the private validated route surface", () => {
+test("createPlugin registers the private validated route surface", async () => {
   const plugin = createPlugin();
+  const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
 
   assert.equal(plugin.id, "akari");
+  assert.equal(plugin.version, packageJson.version);
+  assert.equal(akariPlugin().version, packageJson.version);
   assert.deepEqual(plugin.capabilities, ["content:read"]);
   assert.deepEqual(Object.keys(plugin.routes), ["discover", "resolve", "config"]);
   assert.equal(Boolean(plugin.routes.discover.input), true);

@@ -65,13 +65,13 @@ export async function callAkariRoute(
   const headers = new Headers(options.headers);
 
   headers.set("Accept", "application/json");
+  headers.set("X-EmDash-Request", "1");
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
 
   const requestInit: RequestInit = { method, headers };
 
   if (method === "POST") {
     headers.set("Content-Type", "application/json");
-    headers.set("X-EmDash-Request", "1");
     requestInit.body = JSON.stringify(input ?? {});
   }
 

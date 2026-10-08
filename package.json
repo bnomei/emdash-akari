@@ -1,6 +1,6 @@
 {
   "name": "@bnomei/emdash-akari",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Agent-focused EmDash discovery CLI: resolve exact content targets and query nested JSON beyond MCP search.",
   "keywords": [
     "astro",
@@ -73,7 +73,7 @@
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "emdash": "^0.19.0",
+    "emdash": "1.2.0",
     "publint": "^0.3.21",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -83,12 +83,12 @@
   "peerDependencies": {
     "@cloudflare/kumo": "^2.5.0",
     "@phosphor-icons/react": "^2.1.10",
-    "emdash": ">=0.19.0",
+    "emdash": "^1.2.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.16.0"
   },
   "packageManager": "npm@11.4.2"
 }

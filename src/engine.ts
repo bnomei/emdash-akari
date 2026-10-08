@@ -206,7 +206,8 @@ async function runLexicalSearch(
     collections: collections.length > 0 ? collections : undefined,
     status: indexedStatus,
     locale: getStringEqualityFilter(input.filter, "locale"),
-    limit: Math.max(input.limit * 2, input.limit),
+    // A forwarded cursor must not advance past hits discarded by our result limit.
+    limit: content && collections.length > 0 ? input.limit * 2 : input.limit,
     cursor: input.after ?? undefined,
   });
 
